@@ -98,7 +98,11 @@ class TimeSummaryPanel(ttk.Frame):
             self.week_amount.config(text="(all clients)")
 
             self.uninvoiced_hours.config(text=timer_engine.format_hours(summary['uninvoiced_hours']))
-            self.uninvoiced_amount.config(text="(all clients)")
+            first_date = db.get_first_uninvoiced_date()
+            if first_date and summary['uninvoiced_hours'] > 0:
+                self.uninvoiced_amount.config(text=f"(since {first_date})")
+            else:
+                self.uninvoiced_amount.config(text="(all clients)")
 
             # Show actual invoice amounts
             self.unpaid_amount.config(text=timer_engine.format_currency(summary['invoiced_amount']))
@@ -120,7 +124,11 @@ class TimeSummaryPanel(ttk.Frame):
 
         # Uninvoiced
         self.uninvoiced_hours.config(text=timer_engine.format_hours(summary['uninvoiced_hours']))
-        self.uninvoiced_amount.config(text=f"({timer_engine.format_currency(summary['uninvoiced_hours'] * rate)})")
+        first_date = db.get_first_uninvoiced_date(self.client['id'])
+        if first_date and summary['uninvoiced_hours'] > 0:
+            self.uninvoiced_amount.config(text=f"(since {first_date})")
+        else:
+            self.uninvoiced_amount.config(text=f"({timer_engine.format_currency(summary['uninvoiced_hours'] * rate)})")
 
         # Unpaid invoices (actual invoice amounts)
         self.unpaid_amount.config(text=timer_engine.format_currency(summary['invoiced_amount']))

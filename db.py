@@ -639,6 +639,27 @@ def get_time_entry(entry_id: int) -> Optional[Dict]:
     return dict(row) if row else None
 
 
+def get_first_uninvoiced_date(client_id: Optional[int] = None) -> Optional[str]:
+    """Get the earliest date with uninvoiced time entries."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    if client_id:
+        cursor.execute("""
+            SELECT MIN(date(start_time)) as first_date
+            FROM time_entries
+            WHERE client_id = ? AND invoiced = 0 AND duration_seconds IS NOT NULL
+        """, (client_id,))
+    else:
+        cursor.execute("""
+            SELECT MIN(date(start_time)) as first_date
+            FROM time_entries
+            WHERE invoiced = 0 AND duration_seconds IS NOT NULL
+        """)
+    row = cursor.fetchone()
+    conn.close()
+    return row['first_date'] if row else None
+
+
 def get_time_entries(
     client_id: Optional[int] = None,
     start_date: Optional[datetime] = None,
