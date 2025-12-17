@@ -327,6 +327,7 @@ class ClientListPanel(ttk.Frame):
             self.context_menu.add_command(label="  Build Invoice", command=self._show_build_invoice)
             self.context_menu.add_command(label="  Open Invoices Folder", command=self._open_client_invoices)
             self.context_menu.add_separator()
+            self.context_menu.add_command(label="  Hide", command=self._archive_selected)
             self.context_menu.add_command(label="  Delete", command=self._delete_selected)
 
         self.context_menu.post(event.x_root, event.y_root)
@@ -492,6 +493,20 @@ class ClientListPanel(ttk.Frame):
             except ValueError as e:
                 messagebox.showerror("Cannot Delete", str(e), parent=self)
 
+    def _archive_selected(self):
+        """Archive (hide) the selected client."""
+        if not self.selected_id:
+            return
+
+        client = next((c for c in self.clients if c['id'] == self.selected_id), None)
+        if not client:
+            return
+
+        db.archive_client(self.selected_id)
+        self.selected_id = None
+        self.refresh()
+        self.on_select(None)
+
     def _delete_selected(self):
         """Delete the selected client."""
         if not self.selected_id:
@@ -501,30 +516,20 @@ class ClientListPanel(ttk.Frame):
         if not client:
             return
 
-        # Confirm deletion
-        result = messagebox.askyesnocancel(
+        if not messagebox.askyesno(
             "Delete Client",
-            f"Delete '{client['name']}'?\n\n"
-            "Yes = Delete permanently (only if no time entries)\n"
-            "No = Archive (hide but keep data)",
+            f"Permanently delete '{client['name']}'?\n\nThis cannot be undone.",
             parent=self
-        )
-
-        if result is None:  # Cancel
+        ):
             return
-        elif result:  # Yes - delete
-            try:
-                db.delete_client(self.selected_id)
-                self.selected_id = None
-                self.refresh()
-                self.on_select(None)
-            except ValueError as e:
-                messagebox.showerror("Cannot Delete", str(e), parent=self)
-        else:  # No - archive
-            db.archive_client(self.selected_id)
+
+        try:
+            db.delete_client(self.selected_id)
             self.selected_id = None
             self.refresh()
             self.on_select(None)
+        except ValueError as e:
+            messagebox.showerror("Cannot Delete", str(e), parent=self)
 
     def _add_client(self):
         """Show dialog to add new client."""
