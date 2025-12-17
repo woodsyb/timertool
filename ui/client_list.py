@@ -314,6 +314,7 @@ class ClientListPanel(ttk.Frame):
             self.context_menu.add_command(label="  Restore", command=self._restore_selected)
             self.context_menu.add_separator()
             self.context_menu.add_command(label="  Time Entries", command=self._show_time_entries)
+            self.context_menu.add_command(label="  Invoices", command=self._show_invoices)
             self.context_menu.add_command(label="  Open Invoices Folder", command=self._open_client_invoices)
             self.context_menu.add_separator()
             self.context_menu.add_command(label="  Delete Permanently", command=self._delete_permanently)
@@ -322,6 +323,7 @@ class ClientListPanel(ttk.Frame):
             self.context_menu.add_command(label="  Billing Info", command=self._show_billing_info)
             self.context_menu.add_separator()
             self.context_menu.add_command(label="  Time Entries", command=self._show_time_entries)
+            self.context_menu.add_command(label="  Invoices", command=self._show_invoices)
             self.context_menu.add_command(label="  Build Invoice", command=self._show_build_invoice)
             self.context_menu.add_command(label="  Open Invoices Folder", command=self._open_client_invoices)
             self.context_menu.add_separator()
@@ -400,6 +402,15 @@ class ClientListPanel(ttk.Frame):
 
         from ui.dialogs import TimeEntriesDialog
         dialog = TimeEntriesDialog(self.winfo_toplevel(), client_id=client['id'], client_name=client['name'])
+        self.wait_window(dialog)
+
+    def _show_invoices(self):
+        """Show invoices dialog for selected client."""
+        if not self.selected_id:
+            return
+
+        from ui.dialogs import InvoiceListDialog
+        dialog = InvoiceListDialog(self.winfo_toplevel(), client_id=self.selected_id)
         self.wait_window(dialog)
 
     def _show_build_invoice(self):
