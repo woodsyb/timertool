@@ -5,6 +5,8 @@ from tkinter import ttk, messagebox
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List
 from tkcalendar import DateEntry
+from tkinter import filedialog
+import csv
 import db
 import timer_engine
 
@@ -678,6 +680,7 @@ class TimeEntriesDialog(tk.Toplevel):
         ttk.Button(btn_frame, text="Delete", command=self._delete_entry).pack(side='left', padx=2)
         ttk.Button(btn_frame, text="Expand All", command=self._expand_all).pack(side='left', padx=2)
         ttk.Button(btn_frame, text="Collapse All", command=self._collapse_all).pack(side='left', padx=2)
+        ttk.Button(btn_frame, text="Export CSV", command=self._export_csv).pack(side='left', padx=2)
         ttk.Button(btn_frame, text="Close", command=self.destroy).pack(side='right', padx=2)
 
         # Totals
@@ -709,6 +712,9 @@ class TimeEntriesDialog(tk.Toplevel):
 
         # Sort entries by date (newest first)
         entries.sort(key=lambda e: e['start_time'], reverse=True)
+
+        # Store for export
+        self.current_entries = entries
 
         total_hours = 0
         total_keys = 0
@@ -867,6 +873,78 @@ class TimeEntriesDialog(tk.Toplevel):
         """Collapse all date groups."""
         for item in self.tree.get_children():
             self.tree.item(item, open=False)
+
+    def _export_csv(self):
+        """Export current entries to CSV."""
+        if not hasattr(self, 'current_entries') or not self.current_entries:
+            messagebox.showinfo("No Data", "No entries to export.", parent=self)
+            return
+
+        # Generate default filename
+        filter_name = self.filter_var.get()
+        date_str = datetime.now().strftime('%Y%m%d')
+        default_name = f"time_entries_{filter_name}_{date_str}.csv"
+
+        filepath = filedialog.asksaveasfilename(
+            parent=self,
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            initialfile=default_name
+        )
+
+        if not filepath:
+            return
+
+        try:
+            with open(filepath, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                # Header
+                writer.writerow([
+                    'Date', 'Start Time', 'End Time', 'Hours', 'Type',
+                    'Description', 'Key Presses', 'Mouse Clicks', 'Mouse Moves',
+                    'Status', 'Invoice Number'
+                ])
+
+                for entry in self.current_entries:
+                    dt = datetime.fromisoformat(entry['start_time'])
+                    end_dt = datetime.fromisoformat(entry['end_time']) if entry.get('end_time') else None
+                    hours = (entry['duration_seconds'] or 0) / 3600
+
+                    # Determine status
+                    if not entry['invoiced']:
+                        status = "Uninvoiced"
+                    else:
+                        inv_num = entry.get('invoice_number')
+                        if inv_num:
+                            invoice = db.get_invoice(inv_num)
+                            if invoice and invoice.get('status') == 'paid':
+                                status = "Paid"
+                            elif invoice and invoice.get('amount_paid', 0) > 0:
+                                status = "Partial"
+                            else:
+                                status = "Invoiced"
+                        else:
+                            status = "Invoiced"
+
+                    writer.writerow([
+                        dt.strftime('%Y-%m-%d'),
+                        dt.strftime('%H:%M:%S'),
+                        end_dt.strftime('%H:%M:%S') if end_dt else '',
+                        f"{hours:.2f}",
+                        entry.get('entry_type', 'stopwatch'),
+                        entry.get('description', '') or '',
+                        entry.get('key_presses') or 0,
+                        entry.get('mouse_clicks') or 0,
+                        entry.get('mouse_moves') or 0,
+                        status,
+                        entry.get('invoice_number', '') or ''
+                    ])
+
+            messagebox.showinfo("Export Complete",
+                              f"Exported {len(self.current_entries)} entries to:\n{filepath}",
+                              parent=self)
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Failed to export: {e}", parent=self)
 
 
 class EditTimeEntryDialog(tk.Toplevel):
@@ -1042,26 +1120,69 @@ class SettingsDialog(tk.Toplevel):
         # Inactivity timeout
         ttk.Label(frame, text="Inactivity Timeout (minutes):").grid(row=0, column=0, sticky='w', pady=5)
         self.timeout_var = tk.StringVar(value=db.get_setting('inactivity_timeout_minutes', '10'))
-        ttk.Entry(frame, textvariable=self.timeout_var, width=10).grid(row=0, column=1, sticky='w', pady=5)
+        ttk.Entry(frame, textvariable=self.timeout_var, width=10).grid(row=0, column=1, columnspan=2, sticky='w', pady=5)
 
         # Auto-save interval
         ttk.Label(frame, text="Auto-save Interval (seconds):").grid(row=1, column=0, sticky='w', pady=5)
         self.save_var = tk.StringVar(value=db.get_setting('auto_save_interval_seconds', '30'))
-        ttk.Entry(frame, textvariable=self.save_var, width=10).grid(row=1, column=1, sticky='w', pady=5)
+        ttk.Entry(frame, textvariable=self.save_var, width=10).grid(row=1, column=1, columnspan=2, sticky='w', pady=5)
 
         # Data folder info
         ttk.Label(frame, text="Data Folder:").grid(row=2, column=0, sticky='w', pady=5)
         data_path = str(db.get_data_dir())
-        ttk.Label(frame, text=data_path, foreground='gray').grid(row=2, column=1, sticky='w', pady=5)
+        ttk.Label(frame, text=data_path, foreground='gray').grid(row=2, column=1, columnspan=2, sticky='w', pady=5)
+
+        # Backup location
+        ttk.Label(frame, text="Backup Location:").grid(row=3, column=0, sticky='w', pady=5)
+        self.backup_var = tk.StringVar(value=db.get_setting('backup_location', ''))
+        backup_entry = ttk.Entry(frame, textvariable=self.backup_var, width=30)
+        backup_entry.grid(row=3, column=1, sticky='w', pady=5)
+        ttk.Button(frame, text="Browse...", command=self._browse_backup, width=8).grid(row=3, column=2, sticky='w', padx=5, pady=5)
+
+        ttk.Label(frame, text="(Leave blank for default)",
+                 font=('Segoe UI', 8), foreground='gray').grid(row=4, column=0, columnspan=3, sticky='w')
+
+        # S3 Backup section
+        ttk.Separator(frame, orient='horizontal').grid(row=5, column=0, columnspan=3, sticky='ew', pady=10)
+        ttk.Label(frame, text="S3 Backup (optional)", font=('Segoe UI', 9, 'bold')).grid(row=6, column=0, columnspan=3, sticky='w')
+
+        ttk.Label(frame, text="Bucket:").grid(row=7, column=0, sticky='w', pady=2)
+        self.s3_bucket_var = tk.StringVar(value=db.get_setting('s3_bucket', ''))
+        ttk.Entry(frame, textvariable=self.s3_bucket_var, width=30).grid(row=7, column=1, columnspan=2, sticky='w', pady=2)
+
+        ttk.Label(frame, text="Region:").grid(row=8, column=0, sticky='w', pady=2)
+        self.s3_region_var = tk.StringVar(value=db.get_setting('s3_region', 'us-east-1'))
+        ttk.Entry(frame, textvariable=self.s3_region_var, width=15).grid(row=8, column=1, columnspan=2, sticky='w', pady=2)
+
+        ttk.Label(frame, text="Access Key:").grid(row=9, column=0, sticky='w', pady=2)
+        self.s3_access_var = tk.StringVar(value=db.get_setting('s3_access_key', ''))
+        ttk.Entry(frame, textvariable=self.s3_access_var, width=30).grid(row=9, column=1, columnspan=2, sticky='w', pady=2)
+
+        ttk.Label(frame, text="Secret Key:").grid(row=10, column=0, sticky='w', pady=2)
+        self.s3_secret_var = tk.StringVar(value=db.get_setting('s3_secret_key', ''))
+        ttk.Entry(frame, textvariable=self.s3_secret_var, width=30, show='*').grid(row=10, column=1, columnspan=2, sticky='w', pady=2)
+
+        ttk.Label(frame, text="(Uploads to s3://bucket/timertool-backups/ on startup)",
+                 font=('Segoe UI', 8), foreground='gray').grid(row=11, column=0, columnspan=3, sticky='w')
 
         # Buttons
         btn_frame = ttk.Frame(frame)
-        btn_frame.grid(row=3, column=0, columnspan=2, pady=(15, 0))
+        btn_frame.grid(row=12, column=0, columnspan=3, pady=(15, 0))
 
         ttk.Button(btn_frame, text="Save", command=self._save).pack(side='left', padx=5)
         ttk.Button(btn_frame, text="Cancel", command=self.destroy).pack(side='left', padx=5)
 
         self.bind('<Escape>', lambda e: self.destroy())
+
+    def _browse_backup(self):
+        """Browse for backup folder."""
+        folder = filedialog.askdirectory(
+            parent=self,
+            title="Select Backup Folder",
+            initialdir=self.backup_var.get() or str(db.get_data_dir())
+        )
+        if folder:
+            self.backup_var.set(folder)
 
     def _save(self):
         """Save settings."""
@@ -1074,8 +1195,23 @@ class SettingsDialog(tk.Toplevel):
             messagebox.showerror("Error", "Please enter valid numbers.", parent=self)
             return
 
+        # Validate backup location if set
+        backup_loc = self.backup_var.get().strip()
+        if backup_loc:
+            from pathlib import Path
+            if not Path(backup_loc).exists():
+                messagebox.showerror("Error", "Backup location does not exist.", parent=self)
+                return
+
         db.set_setting('inactivity_timeout_minutes', str(timeout))
         db.set_setting('auto_save_interval_seconds', str(save_interval))
+        db.set_setting('backup_location', backup_loc)
+
+        # S3 settings
+        db.set_setting('s3_bucket', self.s3_bucket_var.get().strip())
+        db.set_setting('s3_region', self.s3_region_var.get().strip())
+        db.set_setting('s3_access_key', self.s3_access_var.get().strip())
+        db.set_setting('s3_secret_key', self.s3_secret_var.get().strip())
 
         self.result = True
         self.destroy()
@@ -1234,3 +1370,243 @@ class BusinessSetupDialog(tk.Toplevel):
 
         self.result = True
         self.destroy()
+
+
+class TaxYearSummaryDialog(tk.Toplevel):
+    """Dialog showing income summary for tax purposes."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Tax Year Summary")
+        self.configure(bg='#1c1c1c')
+
+        self.transient(parent)
+        self.grab_set()
+
+        self._create_widgets()
+        self.geometry('650x500+%d+%d' % (parent.winfo_rootx() + 30, parent.winfo_rooty() + 30))
+        self._load_summary()
+
+    def _create_widgets(self):
+        frame = ttk.Frame(self, padding=15)
+        frame.pack(fill='both', expand=True)
+
+        # Year selector
+        year_frame = ttk.Frame(frame)
+        year_frame.pack(fill='x', pady=(0, 10))
+
+        ttk.Label(year_frame, text="Tax Year:", font=('Segoe UI', 10)).pack(side='left')
+        current_year = datetime.now().year
+        years = [str(y) for y in range(current_year, current_year - 5, -1)]
+        self.year_var = tk.StringVar(value=str(current_year))
+        year_combo = ttk.Combobox(year_frame, textvariable=self.year_var, values=years, width=8, state='readonly')
+        year_combo.pack(side='left', padx=10)
+        year_combo.bind('<<ComboboxSelected>>', lambda e: self._load_summary())
+
+        # Total income display
+        self.total_frame = ttk.Frame(frame)
+        self.total_frame.pack(fill='x', pady=10)
+
+        ttk.Label(self.total_frame, text="Total Income:", font=('Segoe UI', 11)).pack(side='left')
+        self.total_label = ttk.Label(self.total_frame, text="$0.00", font=('Segoe UI', 14, 'bold'), foreground='#4caf50')
+        self.total_label.pack(side='left', padx=10)
+
+        ttk.Label(self.total_frame, text="(This is what you report on Schedule C)", font=('Segoe UI', 9), foreground='gray').pack(side='left')
+
+        # Quarterly breakdown (for estimated taxes)
+        quarter_frame = ttk.Frame(frame)
+        quarter_frame.pack(fill='x', pady=5)
+
+        self.q_labels = {}
+        for i, q in enumerate(['Q1 (Jan-Mar)', 'Q2 (Apr-Jun)', 'Q3 (Jul-Sep)', 'Q4 (Oct-Dec)']):
+            qf = ttk.Frame(quarter_frame)
+            qf.pack(side='left', padx=10)
+            ttk.Label(qf, text=q, font=('Segoe UI', 8), foreground='gray').pack()
+            self.q_labels[f"q{i+1}"] = ttk.Label(qf, text="$0", font=('Segoe UI', 9))
+            self.q_labels[f"q{i+1}"].pack()
+
+        ttk.Separator(frame, orient='horizontal').pack(fill='x', pady=10)
+
+        # By client breakdown
+        ttk.Label(frame, text="Income by Client:", font=('Segoe UI', 10, 'bold')).pack(anchor='w')
+
+        # Treeview for client breakdown
+        columns = ('total', 'invoices')
+        self.client_tree = ttk.Treeview(frame, columns=columns, show='tree headings', height=6)
+        self.client_tree.heading('#0', text='Client')
+        self.client_tree.heading('total', text='Total Paid')
+        self.client_tree.heading('invoices', text='Invoices')
+        self.client_tree.column('#0', width=300)
+        self.client_tree.column('total', width=120, anchor='e')
+        self.client_tree.column('invoices', width=80, anchor='center')
+        self.client_tree.pack(fill='x', pady=5)
+
+        ttk.Separator(frame, orient='horizontal').pack(fill='x', pady=10)
+
+        # Invoice details
+        ttk.Label(frame, text="Paid Invoices:", font=('Segoe UI', 10, 'bold')).pack(anchor='w')
+
+        inv_columns = ('client', 'date_paid', 'amount')
+        self.inv_tree = ttk.Treeview(frame, columns=inv_columns, show='headings', height=8)
+        self.inv_tree.heading('client', text='Client')
+        self.inv_tree.heading('date_paid', text='Date Paid')
+        self.inv_tree.heading('amount', text='Amount')
+        self.inv_tree.column('client', width=250)
+        self.inv_tree.column('date_paid', width=120)
+        self.inv_tree.column('amount', width=100, anchor='e')
+
+        inv_scroll = ttk.Scrollbar(frame, orient='vertical', command=self.inv_tree.yview)
+        self.inv_tree.configure(yscrollcommand=inv_scroll.set)
+        self.inv_tree.pack(side='left', fill='both', expand=True)
+        inv_scroll.pack(side='right', fill='y')
+
+        # Buttons
+        btn_frame = ttk.Frame(self)
+        btn_frame.pack(fill='x', padx=15, pady=10)
+
+        ttk.Button(btn_frame, text="Export CSV", command=self._export_csv).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Export TXF (TurboTax)", command=self._export_txf).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Close", command=self.destroy).pack(side='right', padx=5)
+
+        self.bind('<Escape>', lambda e: self.destroy())
+
+    def _load_summary(self):
+        """Load summary for selected year."""
+        year = int(self.year_var.get())
+        self.summary = db.get_tax_year_summary(year)
+
+        # Update total
+        self.total_label.config(text=f"${self.summary['total_income']:,.2f}")
+
+        # Update quarterly
+        for q in ['q1', 'q2', 'q3', 'q4']:
+            amount = self.summary['quarters'].get(q, 0)
+            self.q_labels[q].config(text=f"${amount:,.0f}")
+
+        # Update client tree
+        for item in self.client_tree.get_children():
+            self.client_tree.delete(item)
+
+        for client in self.summary['by_client']:
+            name = client['client_name']
+            if client['company_name'] and client['company_name'] != name:
+                name = f"{name} ({client['company_name']})"
+            self.client_tree.insert('', 'end', text=name,
+                                   values=(f"${client['total_paid']:,.2f}", client['invoice_count']))
+
+        # Update invoice tree
+        for item in self.inv_tree.get_children():
+            self.inv_tree.delete(item)
+
+        for inv in self.summary['invoices']:
+            self.inv_tree.insert('', 'end', iid=inv['invoice_number'],
+                               values=(inv['client_name'], inv['date_paid'], f"${inv['total']:,.2f}"))
+
+    def _export_csv(self):
+        """Export summary to CSV."""
+        if not self.summary or not self.summary['invoices']:
+            messagebox.showinfo("No Data", "No invoices to export for this year.", parent=self)
+            return
+
+        year = self.year_var.get()
+        default_name = f"tax_summary_{year}.csv"
+
+        filepath = filedialog.asksaveasfilename(
+            parent=self,
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            initialfile=default_name
+        )
+
+        if not filepath:
+            return
+
+        try:
+            with open(filepath, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+
+                # Summary section
+                writer.writerow([f"Tax Year {year} Income Summary"])
+                writer.writerow([])
+                writer.writerow(["Total Income", f"${self.summary['total_income']:,.2f}"])
+                writer.writerow([])
+
+                # By client
+                writer.writerow(["Income by Client"])
+                writer.writerow(["Client", "Total Paid", "Invoice Count"])
+                for client in self.summary['by_client']:
+                    name = client['client_name']
+                    if client['company_name'] and client['company_name'] != name:
+                        name = f"{name} ({client['company_name']})"
+                    writer.writerow([name, f"${client['total_paid']:,.2f}", client['invoice_count']])
+                writer.writerow([])
+
+                # Invoice details
+                writer.writerow(["Invoice Details"])
+                writer.writerow(["Invoice #", "Client", "Date Issued", "Date Paid", "Amount", "Description"])
+                for inv in self.summary['invoices']:
+                    writer.writerow([
+                        inv['invoice_number'],
+                        inv['client_name'],
+                        inv['date_issued'],
+                        inv['date_paid'],
+                        f"${inv['total']:,.2f}",
+                        inv.get('description', '')
+                    ])
+
+            messagebox.showinfo("Export Complete", f"Exported to:\n{filepath}", parent=self)
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Failed to export: {e}", parent=self)
+
+    def _export_txf(self):
+        """Export summary to TXF format for TurboTax import."""
+        if not self.summary or not self.summary['invoices']:
+            messagebox.showinfo("No Data", "No invoices to export for this year.", parent=self)
+            return
+
+        year = self.year_var.get()
+        default_name = f"schedule_c_income_{year}.txf"
+
+        filepath = filedialog.asksaveasfilename(
+            parent=self,
+            defaultextension=".txf",
+            filetypes=[("TXF files", "*.txf"), ("All files", "*.*")],
+            initialfile=default_name
+        )
+
+        if not filepath:
+            return
+
+        try:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                # TXF Header
+                f.write("V042\n")  # Version
+                f.write("ATimerTool\n")  # Application name
+                f.write(f"D{datetime.now().strftime('%m/%d/%Y')}\n")  # Export date
+                f.write("^\n")  # Record separator
+
+                # N293 = Schedule C Gross Receipts (Line 1)
+                # One record per client for detail
+                for client in self.summary['by_client']:
+                    name = client['client_name']
+                    if client['company_name'] and client['company_name'] != name:
+                        name = f"{name} ({client['company_name']})"
+
+                    f.write("TD\n")  # Detail record
+                    f.write("N293\n")  # Gross receipts
+                    f.write("C1\n")  # Copy 1
+                    f.write("L1\n")  # Line 1
+                    f.write(f"P{name}\n")  # Description (client name)
+                    f.write(f"${client['total_paid']:.2f}\n")  # Amount
+                    f.write("^\n")  # Record separator
+
+            messagebox.showinfo(
+                "TXF Export Complete",
+                f"Exported to:\n{filepath}\n\n"
+                f"To import into TurboTax Desktop:\n"
+                f"File > Import > From Accounting Software\n"
+                f"Select 'Other' and browse to this file.",
+                parent=self
+            )
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Failed to export: {e}", parent=self)

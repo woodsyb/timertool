@@ -23,6 +23,105 @@ def get_data_dir() -> Path:
     return data_dir
 
 
+def get_backups_dir() -> Path:
+    """Get the backups directory (creates if needed)."""
+    backups_dir = get_data_dir() / "backups"
+    backups_dir.mkdir(exist_ok=True)
+    return backups_dir
+
+
+def backup_database(keep_count: int = 10) -> Optional[Path]:
+    """Create a backup of the database, keeping only the last N backups. Returns backup path."""
+    import shutil
+
+    db_path = get_db_path()
+    if not db_path.exists():
+        return None  # No database yet
+
+    # Check for custom backup location
+    custom_location = get_setting('backup_location', '')
+    if custom_location and Path(custom_location).exists():
+        backups_dir = Path(custom_location)
+    else:
+        backups_dir = get_backups_dir()
+
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    backup_name = f"invoices_{timestamp}.db"
+    backup_path = backups_dir / backup_name
+
+    # Copy the database
+    try:
+        shutil.copy2(db_path, backup_path)
+    except Exception:
+        return None  # Silently fail if backup fails
+
+    # Clean up old backups (keep only the most recent N)
+    backups = sorted(backups_dir.glob("invoices_*.db"), reverse=True)
+    for old_backup in backups[keep_count:]:
+        try:
+            old_backup.unlink()
+        except Exception:
+            pass  # Ignore deletion errors
+
+    return backup_path
+
+
+def _log_error(message: str):
+    """Log error to backup_errors.log in data dir."""
+    try:
+        log_path = get_data_dir() / "backup_errors.log"
+        with open(log_path, 'a') as f:
+            f.write(f"{datetime.now().isoformat()} - {message}\n")
+    except Exception:
+        pass  # Can't even log, give up
+
+
+def upload_to_s3(file_path: Path) -> bool:
+    """Upload a file to S3. Returns True if successful."""
+    bucket = get_setting('s3_bucket', '')
+    region = get_setting('s3_region', '')
+    access_key = get_setting('s3_access_key', '')
+    secret_key = get_setting('s3_secret_key', '')
+
+    if not all([bucket, region, access_key, secret_key]):
+        _log_error(f"S3 not configured - bucket={bool(bucket)}, region={bool(region)}, access_key={bool(access_key)}, secret_key={bool(secret_key)}")
+        return False
+
+    try:
+        import boto3
+        from botocore.config import Config
+
+        config = Config(
+            region_name=region,
+            s3={'use_accelerate_endpoint': False}
+        )
+        s3 = boto3.client(
+            's3',
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            config=config
+        )
+
+        # Upload with the same filename
+        s3_key = f"timertool-backups/{file_path.name}"
+        s3.upload_file(str(file_path), bucket, s3_key)
+
+        # Clean up old S3 backups (keep last 10)
+        response = s3.list_objects_v2(Bucket=bucket, Prefix='timertool-backups/')
+        if 'Contents' in response:
+            objects = sorted(response['Contents'], key=lambda x: x['LastModified'], reverse=True)
+            for obj in objects[10:]:
+                s3.delete_object(Bucket=bucket, Key=obj['Key'])
+
+        return True
+    except ImportError as e:
+        _log_error(f"boto3 not installed: {e}")
+        return False
+    except Exception as e:
+        _log_error(f"S3 upload failed: {type(e).__name__}: {e}")
+        return False
+
+
 def get_invoices_dir() -> Path:
     """Get the invoices directory (creates if needed)."""
     invoices_dir = get_app_dir() / "invoices"
@@ -965,6 +1064,85 @@ def clear_active_timer():
     cursor.execute("DELETE FROM active_timer WHERE id = 1")
     conn.commit()
     conn.close()
+
+
+# === Tax Year Summary ===
+
+def get_tax_year_summary(year: int) -> Dict[str, Any]:
+    """Get income summary for a tax year (based on payment date)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    year_start = f"{year}-01-01"
+    year_end = f"{year}-12-31"
+
+    # Get all paid invoices for the year, grouped by client
+    cursor.execute("""
+        SELECT
+            c.id as client_id,
+            COALESCE(c.contact_name, c.company_name) as client_name,
+            c.company_name,
+            SUM(i.total) as total_paid,
+            COUNT(i.id) as invoice_count
+        FROM invoices i
+        JOIN clients c ON i.client_id = c.id
+        WHERE i.status = 'paid'
+          AND i.date_paid >= ? AND i.date_paid <= ?
+        GROUP BY c.id
+        ORDER BY total_paid DESC
+    """, (year_start, year_end))
+    by_client = [dict(row) for row in cursor.fetchall()]
+
+    # Get individual invoice details
+    cursor.execute("""
+        SELECT
+            i.invoice_number,
+            i.client_id,
+            COALESCE(c.contact_name, c.company_name) as client_name,
+            i.date_issued,
+            i.date_paid,
+            i.total,
+            i.description
+        FROM invoices i
+        JOIN clients c ON i.client_id = c.id
+        WHERE i.status = 'paid'
+          AND i.date_paid >= ? AND i.date_paid <= ?
+        ORDER BY i.date_paid
+    """, (year_start, year_end))
+    invoices = [dict(row) for row in cursor.fetchall()]
+
+    # Total
+    total_income = sum(c['total_paid'] for c in by_client)
+
+    # Quarterly totals (for estimated tax purposes)
+    quarters = {}
+    for q in range(1, 5):
+        if q == 1:
+            q_start, q_end = f"{year}-01-01", f"{year}-03-31"
+        elif q == 2:
+            q_start, q_end = f"{year}-04-01", f"{year}-06-30"
+        elif q == 3:
+            q_start, q_end = f"{year}-07-01", f"{year}-09-30"
+        else:
+            q_start, q_end = f"{year}-10-01", f"{year}-12-31"
+
+        cursor.execute("""
+            SELECT COALESCE(SUM(total), 0) as total
+            FROM invoices
+            WHERE status = 'paid'
+              AND date_paid >= ? AND date_paid <= ?
+        """, (q_start, q_end))
+        quarters[f"q{q}"] = cursor.fetchone()['total']
+
+    conn.close()
+
+    return {
+        'year': year,
+        'total_income': total_income,
+        'by_client': by_client,
+        'invoices': invoices,
+        'quarters': quarters
+    }
 
 
 # === Helpers ===

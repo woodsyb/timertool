@@ -27,6 +27,8 @@ a = Analysis(
         'pynput._util.win32',
         'sv_ttk',
         'pywinstyles',
+        'boto3',
+        'botocore',
     ],
     hookspath=[],
     hooksconfig={},

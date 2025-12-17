@@ -248,6 +248,13 @@ def main():
     # Initialize database
     db.init_db()
 
+    # Backup database on startup (keeps last 10)
+    backup_path = db.backup_database()
+
+    # Upload to S3 if configured
+    if backup_path:
+        db.upload_to_s3(backup_path)
+
     # Create and run app
     app = TimerApp()
     app.run()

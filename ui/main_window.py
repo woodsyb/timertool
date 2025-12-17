@@ -8,7 +8,7 @@ import timer_engine
 from ui.client_list import ClientListPanel
 from ui.timer_display import TimerDisplayPanel
 from ui.time_summary import TimeSummaryPanel
-from ui.dialogs import ManualEntryDialog, BuildInvoiceDialog, IdleDialog, RecoveryDialog, SettingsDialog, BusinessSetupDialog, InvoiceListDialog, TimeEntriesDialog
+from ui.dialogs import ManualEntryDialog, BuildInvoiceDialog, IdleDialog, RecoveryDialog, SettingsDialog, BusinessSetupDialog, InvoiceListDialog, TimeEntriesDialog, TaxYearSummaryDialog
 import os
 import subprocess
 import sys
@@ -129,6 +129,7 @@ class MainWindow(ttk.Frame):
         self.menubar.add_cascade(label="View", menu=view_menu)
         view_menu.add_command(label="Time Entries...", command=self._show_time_entries)
         view_menu.add_command(label="Invoices...", command=self._show_invoices)
+        view_menu.add_command(label="Tax Year Summary...", command=self._show_tax_summary)
         view_menu.add_separator()
         view_menu.add_command(label="Refresh", command=self._refresh_all)
 
@@ -333,6 +334,11 @@ class MainWindow(ttk.Frame):
         client_id = self.current_client['id'] if self.current_client else None
         client_name = self.current_client['name'] if self.current_client else ""
         dialog = TimeEntriesDialog(self.winfo_toplevel(), client_id=client_id, client_name=client_name)
+        self.wait_window(dialog)
+
+    def _show_tax_summary(self):
+        """Show the tax year summary dialog."""
+        dialog = TaxYearSummaryDialog(self.winfo_toplevel())
         self.wait_window(dialog)
 
     def _do_exit(self):
