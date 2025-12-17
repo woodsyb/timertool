@@ -51,6 +51,9 @@ class TimeSummaryPanel(ttk.Frame):
         # Separator
         ttk.Separator(summary_frame, orient='horizontal').pack(fill='x', pady=5)
 
+        # Invoiced header
+        ttk.Label(summary_frame, text="Invoiced:", font=('Segoe UI', 9, 'bold')).pack(anchor='w')
+
         # Unpaid invoices
         row4 = ttk.Frame(summary_frame)
         row4.pack(fill='x', pady=2)
