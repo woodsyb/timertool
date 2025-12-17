@@ -626,7 +626,7 @@ class TimeEntriesDialog(tk.Toplevel):
         filter_frame = ttk.Frame(frame)
         filter_frame.pack(fill='x', pady=(0, 10))
 
-        self.filter_var = tk.StringVar(value='all')
+        self.filter_var = tk.StringVar(value='uninvoiced')
         ttk.Radiobutton(filter_frame, text="All", variable=self.filter_var, value='all',
                        command=self._load_entries).pack(side='left', padx=5)
         ttk.Radiobutton(filter_frame, text="Uninvoiced", variable=self.filter_var, value='uninvoiced',
