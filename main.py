@@ -68,8 +68,8 @@ class TimerApp:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Timer Tool")
-        self.root.geometry("580x520")
-        self.root.minsize(450, 480)
+        self.root.geometry("580x580")
+        self.root.minsize(450, 540)
 
         # Start single instance listener
         self._start_instance_listener()
