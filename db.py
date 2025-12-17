@@ -91,6 +91,12 @@ def init_db():
         cursor.execute("ALTER TABLE banking ADD COLUMN swift_code TEXT")
     if 'intl_wire_instructions' not in banking_cols:
         cursor.execute("ALTER TABLE banking ADD COLUMN intl_wire_instructions TEXT")
+    if 'domestic_wire_instructions' not in banking_cols:
+        cursor.execute("ALTER TABLE banking ADD COLUMN domestic_wire_instructions TEXT")
+    if 'paypal_email' not in banking_cols:
+        cursor.execute("ALTER TABLE banking ADD COLUMN paypal_email TEXT")
+    if 'credit_card_instructions' not in banking_cols:
+        cursor.execute("ALTER TABLE banking ADD COLUMN credit_card_instructions TEXT")
 
     # Clients table
     cursor.execute("""
@@ -98,7 +104,9 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             company_name TEXT NOT NULL,
             contact_name TEXT,
+            bill_to TEXT,
             address TEXT,
+            address2 TEXT,
             city TEXT,
             state TEXT,
             zip TEXT,
@@ -121,6 +129,10 @@ def init_db():
         cursor.execute("ALTER TABLE clients ADD COLUMN archived INTEGER DEFAULT 0")
     if 'track_activity' not in columns:
         cursor.execute("ALTER TABLE clients ADD COLUMN track_activity INTEGER DEFAULT 1")
+    if 'bill_to' not in columns:
+        cursor.execute("ALTER TABLE clients ADD COLUMN bill_to TEXT")
+    if 'address2' not in columns:
+        cursor.execute("ALTER TABLE clients ADD COLUMN address2 TEXT")
 
     # Invoices (from invoices system)
     cursor.execute("""
@@ -304,7 +316,7 @@ def get_clients(include_archived: bool = False) -> List[Dict]:
     conn = get_connection()
     cursor = conn.cursor()
     query = """
-        SELECT id, company_name as name, contact_name, email,
+        SELECT id, company_name, contact_name, email,
                COALESCE(hourly_rate, 0) as hourly_rate, payment_preference,
                COALESCE(favorite, 0) as favorite, COALESCE(archived, 0) as archived,
                COALESCE(track_activity, 1) as track_activity
@@ -312,11 +324,27 @@ def get_clients(include_archived: bool = False) -> List[Dict]:
     """
     if not include_archived:
         query += " WHERE COALESCE(archived, 0) = 0"
-    query += " ORDER BY COALESCE(favorite, 0) DESC, company_name"
+    query += " ORDER BY COALESCE(favorite, 0) DESC, COALESCE(company_name, contact_name)"
     cursor.execute(query)
     rows = cursor.fetchall()
+    clients = []
+    for row in rows:
+        client = dict(row)
+        # Display name: prefer contact_name, fall back to company_name
+        client['name'] = client['contact_name'] or client['company_name'] or ''
+        client['display_name'] = _format_client_display(client['contact_name'], client['company_name'])
+        clients.append(client)
     conn.close()
-    return [dict(row) for row in rows]
+    return clients
+
+
+def _format_client_display(contact_name: str, company_name: str) -> str:
+    """Format client display name from contact and company."""
+    contact = (contact_name or '').strip()
+    company = (company_name or '').strip()
+    if contact and company:
+        return f"{contact} ({company})"
+    return contact or company or ''
 
 
 def get_client(client_id: int) -> Optional[Dict]:
@@ -324,7 +352,7 @@ def get_client(client_id: int) -> Optional[Dict]:
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT id, company_name as name, contact_name, email,
+        SELECT id, company_name, contact_name, email,
                COALESCE(hourly_rate, 0) as hourly_rate, payment_preference,
                COALESCE(favorite, 0) as favorite, COALESCE(archived, 0) as archived,
                COALESCE(track_activity, 1) as track_activity
@@ -332,7 +360,12 @@ def get_client(client_id: int) -> Optional[Dict]:
     """, (client_id,))
     row = cursor.fetchone()
     conn.close()
-    return dict(row) if row else None
+    if row:
+        client = dict(row)
+        client['name'] = client['contact_name'] or client['company_name'] or ''
+        client['display_name'] = _format_client_display(client['contact_name'], client['company_name'])
+        return client
+    return None
 
 
 def toggle_client_favorite(client_id: int) -> bool:
@@ -357,6 +390,15 @@ def archive_client(client_id: int):
     conn.close()
 
 
+def unarchive_client(client_id: int):
+    """Restore an archived client."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE clients SET archived = 0 WHERE id = ?", (client_id,))
+    conn.commit()
+    conn.close()
+
+
 def delete_client(client_id: int):
     """Permanently delete a client (only if no time entries)."""
     conn = get_connection()
@@ -371,28 +413,44 @@ def delete_client(client_id: int):
     conn.close()
 
 
-def save_client(name: str, hourly_rate: float, track_activity: bool = True) -> int:
+def save_client(contact_name: str, company_name: str, hourly_rate: float, track_activity: bool = True) -> int:
     """Save new client, return ID."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO clients (company_name, contact_name, address, city, state, zip, email, hourly_rate, track_activity)
-        VALUES (?, '', '', '', '', '', '', ?, ?)
-    """, (name, hourly_rate, 1 if track_activity else 0))
+        VALUES (?, ?, '', '', '', '', '', ?, ?)
+    """, (company_name, contact_name, hourly_rate, 1 if track_activity else 0))
     client_id = cursor.lastrowid
     conn.commit()
     conn.close()
     return client_id
 
 
-def update_client(client_id: int, name: str, hourly_rate: float, track_activity: bool = True):
+def update_client(client_id: int, contact_name: str, company_name: str, hourly_rate: float, track_activity: bool = True):
     """Update existing client."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE clients SET company_name = ?, hourly_rate = ?, track_activity = ? WHERE id = ?",
-        (name, hourly_rate, 1 if track_activity else 0, client_id)
+        "UPDATE clients SET contact_name = ?, company_name = ?, hourly_rate = ?, track_activity = ? WHERE id = ?",
+        (contact_name, company_name, hourly_rate, 1 if track_activity else 0, client_id)
     )
+    conn.commit()
+    conn.close()
+
+
+def update_client_billing(client_id: int, bill_to: str, address: str, address2: str,
+                          city: str, state: str, zip_code: str,
+                          email: str, payment_preference: str):
+    """Update client billing/invoice info."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE clients
+        SET bill_to = ?, address = ?, address2 = ?, city = ?, state = ?, zip = ?,
+            email = ?, payment_preference = ?
+        WHERE id = ?
+    """, (bill_to, address, address2, city, state, zip_code, email, payment_preference, client_id))
     conn.commit()
     conn.close()
 
@@ -416,8 +474,9 @@ def get_invoice(invoice_number: str) -> Optional[Dict]:
     cursor = conn.cursor()
     cursor.execute("""
         SELECT i.*, c.company_name as client_name, c.contact_name,
-               c.address as client_address, c.city as client_city,
-               c.state as client_state, c.zip as client_zip, c.email as client_email
+               c.bill_to, c.address as client_address, c.address2 as client_address2,
+               c.city as client_city, c.state as client_state, c.zip as client_zip,
+               c.email as client_email
         FROM invoices i
         JOIN clients c ON i.client_id = c.id
         WHERE i.invoice_number = ?
@@ -664,7 +723,8 @@ def get_time_entries(
     client_id: Optional[int] = None,
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
-    invoiced: Optional[bool] = None
+    invoiced: Optional[bool] = None,
+    limit: Optional[int] = None
 ) -> List[Dict]:
     """Get time entries with optional filters."""
     conn = get_connection()
@@ -687,6 +747,9 @@ def get_time_entries(
         params.append(1 if invoiced else 0)
 
     query += " ORDER BY start_time DESC"
+
+    if limit is not None:
+        query += f" LIMIT {int(limit)}"
 
     cursor.execute(query, params)
     rows = cursor.fetchall()

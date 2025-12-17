@@ -3,3 +3,5 @@ Pillow>=10.0.0
 tkcalendar>=1.6.0
 reportlab>=4.0.0
 pynput>=1.7.6
+sv_ttk>=2.6.0
+pywinstyles>=1.8

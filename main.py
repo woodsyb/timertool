@@ -14,6 +14,19 @@ import db
 import timer_engine
 from ui.main_window import MainWindow
 
+# Try to import theming libraries
+try:
+    import sv_ttk
+    SV_TTK_AVAILABLE = True
+except ImportError:
+    SV_TTK_AVAILABLE = False
+
+try:
+    import pywinstyles
+    PYWINSTYLES_AVAILABLE = True
+except ImportError:
+    PYWINSTYLES_AVAILABLE = False
+
 # Single instance port
 SINGLE_INSTANCE_PORT = 47839
 
@@ -68,8 +81,8 @@ class TimerApp:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Timer Tool")
-        self.root.geometry("580x580")
-        self.root.minsize(450, 540)
+        self.root.geometry("360x600")
+        self.root.minsize(340, 560)
 
         # Start single instance listener
         self._start_instance_listener()
@@ -132,15 +145,32 @@ class TimerApp:
                 break
 
     def _setup_style(self):
-        """Set up ttk style."""
-        style = ttk.Style()
+        """Set up ttk style with dark mode using sv_ttk."""
+        # Use sv_ttk for modern dark theme
+        if SV_TTK_AVAILABLE:
+            sv_ttk.set_theme("dark")
 
-        # Try to use a modern theme
-        available_themes = style.theme_names()
-        if 'vista' in available_themes:
-            style.theme_use('vista')
-        elif 'clam' in available_themes:
-            style.theme_use('clam')
+        # Apply dark title bar on Windows
+        if PYWINSTYLES_AVAILABLE and sys.platform == 'win32':
+            try:
+                version = sys.getwindowsversion()
+                if version.major == 10 and version.build >= 22000:
+                    # Windows 11 - can set custom header color
+                    pywinstyles.change_header_color(self.root, "#1c1c1c")
+                elif version.major == 10:
+                    # Windows 10 - use dark style
+                    pywinstyles.apply_style(self.root, "dark")
+                    self.root.wm_attributes("-alpha", 0.99)
+                    self.root.wm_attributes("-alpha", 1)
+            except Exception:
+                pass  # Ignore if it fails
+
+        # Set dark background for tk widgets
+        self.root.configure(bg='#1c1c1c')
+
+        # Configure Accent button style (sv_ttk has Accent.TButton)
+        style = ttk.Style()
+        style.configure('Accent.TButton', font=('Segoe UI', 10, 'bold'))
 
     def _setup_tray(self):
         """Set up system tray icon."""

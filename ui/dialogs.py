@@ -15,6 +15,7 @@ class ManualEntryDialog(tk.Toplevel):
     def __init__(self, parent, client: Dict):
         super().__init__(parent)
         self.title("Manual Entry")
+        self.configure(bg='#1c1c1c')
         self.client = client
         self.result = None
 
@@ -163,6 +164,7 @@ class BuildInvoiceDialog(tk.Toplevel):
     def __init__(self, parent, client: Dict, entries: List[Dict]):
         super().__init__(parent)
         self.title("Build Invoice")
+        self.configure(bg='#1c1c1c')
         self.client = client
         self.entries = entries
         self.result = None
@@ -254,7 +256,7 @@ class BuildInvoiceDialog(tk.Toplevel):
         ttk.Label(details_frame, text="Payment Method:").grid(row=2, column=0, sticky='w', pady=2)
         self.method_var = tk.StringVar(value='ACH')
         method_combo = ttk.Combobox(details_frame, textvariable=self.method_var, width=15, state='readonly')
-        method_combo['values'] = ('ACH', 'Wire', 'Check')
+        method_combo['values'] = ('ACH', 'Domestic Wire', 'International Wire', 'Check')
         method_combo.grid(row=2, column=1, sticky='w', pady=2)
 
         # Buttons
@@ -349,6 +351,7 @@ class IdleDialog(tk.Toplevel):
     def __init__(self, parent, idle_seconds: int, accumulated_seconds: int):
         super().__init__(parent)
         self.title("Timer Paused")
+        self.configure(bg='#1c1c1c')
         self.result = None
         self.idle_seconds = idle_seconds
 
@@ -421,6 +424,7 @@ class RecoveryDialog(tk.Toplevel):
     def __init__(self, parent, client_name: str, accumulated_seconds: int, last_save: datetime):
         super().__init__(parent)
         self.title("Timer Recovery")
+        self.configure(bg='#1c1c1c')
         self.result = None
 
         self.transient(parent)
@@ -489,6 +493,7 @@ class InvoiceListDialog(tk.Toplevel):
     def __init__(self, parent, client_id: int = None):
         super().__init__(parent)
         self.title("Invoices")
+        self.configure(bg='#1c1c1c')
         self.client_id = client_id
 
         self.transient(parent)
@@ -609,6 +614,7 @@ class TimeEntriesDialog(tk.Toplevel):
     def __init__(self, parent, client_id: int = None, client_name: str = ""):
         super().__init__(parent)
         self.title(f"Time Entries - {client_name}" if client_name else "Time Entries")
+        self.configure(bg='#1c1c1c')
         self.client_id = client_id
 
         self.transient(parent)
@@ -668,6 +674,8 @@ class TimeEntriesDialog(tk.Toplevel):
 
         ttk.Button(btn_frame, text="Edit", command=self._edit_entry).pack(side='left', padx=2)
         ttk.Button(btn_frame, text="Delete", command=self._delete_entry).pack(side='left', padx=2)
+        ttk.Button(btn_frame, text="Expand All", command=self._expand_all).pack(side='left', padx=2)
+        ttk.Button(btn_frame, text="Collapse All", command=self._collapse_all).pack(side='left', padx=2)
         ttk.Button(btn_frame, text="Close", command=self.destroy).pack(side='right', padx=2)
 
         # Totals
@@ -843,6 +851,16 @@ class TimeEntriesDialog(tk.Toplevel):
             except ValueError as e:
                 messagebox.showerror("Error", str(e), parent=self)
 
+    def _expand_all(self):
+        """Expand all date groups."""
+        for item in self.tree.get_children():
+            self.tree.item(item, open=True)
+
+    def _collapse_all(self):
+        """Collapse all date groups."""
+        for item in self.tree.get_children():
+            self.tree.item(item, open=False)
+
 
 class EditTimeEntryDialog(tk.Toplevel):
     """Dialog for editing a time entry."""
@@ -850,6 +868,7 @@ class EditTimeEntryDialog(tk.Toplevel):
     def __init__(self, parent, entry: Dict):
         super().__init__(parent)
         self.title("Edit Time Entry")
+        self.configure(bg='#1c1c1c')
         self.entry = entry
         self.result = None
 
@@ -918,6 +937,7 @@ class PaymentDialog(tk.Toplevel):
     def __init__(self, parent, invoice: Dict):
         super().__init__(parent)
         self.title("Record Payment")
+        self.configure(bg='#1c1c1c')
         self.invoice = invoice
         self.result = None
 
@@ -999,6 +1019,7 @@ class SettingsDialog(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("Settings")
+        self.configure(bg='#1c1c1c')
         self.result = None
 
         self.transient(parent)
@@ -1059,17 +1080,40 @@ class BusinessSetupDialog(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("Business Setup")
+        self.configure(bg='#1c1c1c')
         self.result = None
 
         self.transient(parent)
         self.grab_set()
 
         self._create_widgets()
-        self.geometry('450x650+%d+%d' % (parent.winfo_rootx() + 30, parent.winfo_rooty() + 30))
+        self.geometry('450x900+%d+%d' % (parent.winfo_rootx() + 30, parent.winfo_rooty() + 30))
 
     def _create_widgets(self):
-        frame = ttk.Frame(self, padding=15)
-        frame.pack(fill='both', expand=True)
+        # Scrollable container
+        canvas = tk.Canvas(self, bg='#1c1c1c', highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self, orient='vertical', command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        scrollbar.pack(side='right', fill='y')
+        canvas.pack(side='left', fill='both', expand=True)
+
+        frame = ttk.Frame(canvas, padding=15)
+        canvas_frame = canvas.create_window((0, 0), window=frame, anchor='nw')
+
+        def on_frame_configure(e):
+            canvas.configure(scrollregion=canvas.bbox('all'))
+
+        def on_canvas_configure(e):
+            canvas.itemconfig(canvas_frame, width=e.width)
+
+        frame.bind('<Configure>', on_frame_configure)
+        canvas.bind('<Configure>', on_canvas_configure)
+
+        # Mouse wheel scrolling
+        def on_mousewheel(e):
+            canvas.yview_scroll(int(-1*(e.delta/120)), 'units')
+        canvas.bind_all('<MouseWheel>', on_mousewheel)
 
         # Load existing data
         business = db.get_business_info() or {}
@@ -1097,8 +1141,8 @@ class BusinessSetupDialog(tk.Toplevel):
             self.business_vars[key] = var
             ttk.Entry(frame, textvariable=var, width=35).grid(row=i+1, column=1, sticky='w', pady=2)
 
-        # Banking Info Section - Domestic
-        ttk.Label(frame, text="Domestic Wire / ACH", font=('Segoe UI', 10, 'bold')).grid(row=11, column=0, columnspan=2, sticky='w', pady=(15, 5))
+        # Banking Info Section - ACH
+        ttk.Label(frame, text="ACH / Direct Deposit", font=('Segoe UI', 10, 'bold')).grid(row=11, column=0, columnspan=2, sticky='w', pady=(15, 5))
 
         bank_fields = [
             ('Bank Name:', 'bank_name'),
@@ -1113,21 +1157,42 @@ class BusinessSetupDialog(tk.Toplevel):
             self.banking_vars[key] = var
             ttk.Entry(frame, textvariable=var, width=35).grid(row=12+i, column=1, sticky='w', pady=2)
 
+        # Domestic Wire Section
+        row = 16
+        ttk.Label(frame, text="Domestic Wire", font=('Segoe UI', 10, 'bold')).grid(row=row, column=0, columnspan=2, sticky='w', pady=(15, 5))
+        row += 1
+        self.domestic_wire_text = tk.Text(frame, width=40, height=4)
+        self.domestic_wire_text.grid(row=row, column=0, columnspan=2, sticky='w', pady=2)
+        self.domestic_wire_text.insert('1.0', banking.get('domestic_wire_instructions', '') or '')
+        row += 1
+
         # International Wire Section
-        ttk.Label(frame, text="International Wire", font=('Segoe UI', 10, 'bold')).grid(row=16, column=0, columnspan=2, sticky='w', pady=(15, 5))
+        ttk.Label(frame, text="International Wire (SWIFT)", font=('Segoe UI', 10, 'bold')).grid(row=row, column=0, columnspan=2, sticky='w', pady=(15, 5))
+        row += 1
+        self.wire_text = tk.Text(frame, width=40, height=6)
+        self.wire_text.grid(row=row, column=0, columnspan=2, sticky='w', pady=2)
+        self.wire_text.insert('1.0', banking.get('wire_instructions', '') or '')
+        row += 1
 
-        ttk.Label(frame, text="SWIFT Code:").grid(row=17, column=0, sticky='w', pady=2)
-        self.banking_vars['swift_code'] = tk.StringVar(value=banking.get('swift_code', ''))
-        ttk.Entry(frame, textvariable=self.banking_vars['swift_code'], width=35).grid(row=17, column=1, sticky='w', pady=2)
+        # PayPal Section
+        ttk.Label(frame, text="PayPal", font=('Segoe UI', 10, 'bold')).grid(row=row, column=0, columnspan=2, sticky='w', pady=(15, 5))
+        row += 1
+        ttk.Label(frame, text="Email:").grid(row=row, column=0, sticky='w', pady=2)
+        self.banking_vars['paypal_email'] = tk.StringVar(value=banking.get('paypal_email', '') or '')
+        ttk.Entry(frame, textvariable=self.banking_vars['paypal_email'], width=35).grid(row=row, column=1, sticky='w', pady=2)
+        row += 1
 
-        ttk.Label(frame, text="Instructions:").grid(row=18, column=0, sticky='nw', pady=2)
-        self.intl_wire_text = tk.Text(frame, width=35, height=3)
-        self.intl_wire_text.grid(row=18, column=1, sticky='w', pady=2)
-        self.intl_wire_text.insert('1.0', banking.get('intl_wire_instructions', ''))
+        # Credit Card Section
+        ttk.Label(frame, text="Credit Card", font=('Segoe UI', 10, 'bold')).grid(row=row, column=0, columnspan=2, sticky='w', pady=(15, 5))
+        row += 1
+        self.cc_text = tk.Text(frame, width=40, height=2)
+        self.cc_text.grid(row=row, column=0, columnspan=2, sticky='w', pady=2)
+        self.cc_text.insert('1.0', banking.get('credit_card_instructions', '') or '')
+        row += 1
 
         # Buttons
         btn_frame = ttk.Frame(frame)
-        btn_frame.grid(row=25, column=0, columnspan=2, pady=(20, 0))
+        btn_frame.grid(row=row, column=0, columnspan=2, pady=(20, 0))
 
         ttk.Button(btn_frame, text="Save", command=self._save).pack(side='left', padx=5)
         ttk.Button(btn_frame, text="Cancel", command=self.destroy).pack(side='left', padx=5)
@@ -1155,7 +1220,9 @@ class BusinessSetupDialog(tk.Toplevel):
 
         # Save banking info
         banking_data = {key: var.get().strip() for key, var in self.banking_vars.items()}
-        banking_data['intl_wire_instructions'] = self.intl_wire_text.get('1.0', 'end').strip()
+        banking_data['domestic_wire_instructions'] = self.domestic_wire_text.get('1.0', 'end').strip()
+        banking_data['wire_instructions'] = self.wire_text.get('1.0', 'end').strip()
+        banking_data['credit_card_instructions'] = self.cc_text.get('1.0', 'end').strip()
         db.save_banking(banking_data)
 
         self.result = True

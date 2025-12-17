@@ -46,7 +46,7 @@ class TestTimerEngine:
 
     def test_start_timer(self, engine, temp_db):
         """Test starting the timer."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
         engine.start(client_id)
 
         assert engine.state == 'running'
@@ -55,7 +55,7 @@ class TestTimerEngine:
 
     def test_start_with_track_activity_disabled(self, engine, temp_db):
         """Test starting timer without activity tracking."""
-        client_id = db.save_client("Test", 100.0, track_activity=False)
+        client_id = db.save_client("Test", "", 100.0, track_activity=False)
         engine.start(client_id, track_activity=False)
 
         assert engine.state == 'running'
@@ -63,7 +63,7 @@ class TestTimerEngine:
 
     def test_pause_timer(self, engine, temp_db):
         """Test pausing the timer."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
         engine.start(client_id)
         engine.pause()
 
@@ -72,7 +72,7 @@ class TestTimerEngine:
 
     def test_resume_timer(self, engine, temp_db):
         """Test resuming the timer."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
         engine.start(client_id)
         engine.pause()
         engine.resume()
@@ -81,7 +81,7 @@ class TestTimerEngine:
 
     def test_stop_timer_creates_entry(self, engine, temp_db):
         """Test stopping timer creates time entry."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
         engine.start(client_id)
 
         # Simulate some time passing
@@ -103,7 +103,7 @@ class TestTimerEngine:
 
     def test_get_elapsed_seconds_paused(self, engine, temp_db):
         """Test elapsed seconds when paused."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
         engine.start(client_id)
         engine.accumulated_seconds = 100
         engine.pause()
@@ -112,7 +112,7 @@ class TestTimerEngine:
 
     def test_discard_idle_time(self, engine, temp_db):
         """Test discarding idle time."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
         engine.start(client_id)
         engine.accumulated_seconds = 1000
         engine.pause()
@@ -123,7 +123,7 @@ class TestTimerEngine:
 
     def test_discard_idle_time_not_negative(self, engine, temp_db):
         """Test discarding idle time doesn't go negative."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
         engine.start(client_id)
         engine.accumulated_seconds = 100
         engine.pause()
@@ -138,7 +138,7 @@ class TestCrashRecovery:
 
     def test_recover_from_crash(self, engine, temp_db):
         """Test crash recovery returns data."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
         start_time = datetime.now()
 
         # Simulate crash - save active timer
@@ -157,7 +157,7 @@ class TestCrashRecovery:
 
     def test_apply_recovery_keep(self, engine, temp_db):
         """Test applying recovery data (keep)."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
         start_time = datetime.now() - timedelta(hours=1)
         last_save = datetime.now()
 
@@ -177,7 +177,7 @@ class TestCrashRecovery:
 
     def test_apply_recovery_discard(self, engine, temp_db):
         """Test applying recovery data (discard)."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
         start_time = datetime.now()
         db.save_active_timer(client_id, start_time, 3600)
 

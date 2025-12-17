@@ -166,7 +166,7 @@ class TimerEngine:
         if self.on_state_change:
             self.on_state_change('running')
 
-    def stop(self) -> Optional[int]:
+    def stop(self, description: str = '') -> Optional[int]:
         """Stop the timer and save the entry. Returns entry ID."""
         if self.state == 'stopped':
             return None
@@ -183,6 +183,7 @@ class TimerEngine:
             start_time=self.start_time,
             end_time=end_time,
             duration_seconds=total_seconds,
+            description=description,
             entry_type='stopwatch',
             key_presses=activity_stats.get('key_presses', 0),
             mouse_clicks=activity_stats.get('mouse_clicks', 0),

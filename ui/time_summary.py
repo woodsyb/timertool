@@ -17,68 +17,92 @@ class TimeSummaryPanel(ttk.Frame):
         self._create_widgets()
 
     def _create_widgets(self):
-        # Summary frame
-        summary_frame = ttk.LabelFrame(self, text="TIME SUMMARY", padding=10)
-        summary_frame.pack(fill='x', padx=10, pady=5)
+        # Dark theme colors (sv_ttk compatible)
+        BG = '#1c1c1c'
+        BG_CARD = '#2a2a2a'
+        FG = '#fafafa'
+        FG_DIM = '#9e9e9e'
+        ACCENT = '#0078d4'
+        SUCCESS = '#4caf50'
+        WARNING = '#ff9800'
+
+        # Main container with card-like background
+        main = tk.Frame(self, bg=BG)
+        main.pack(fill='x', padx=12, pady=(0, 8))
+
+        # Card
+        card = tk.Frame(main, bg=BG_CARD)
+        card.pack(fill='x')
+
+        # Content area
+        content = tk.Frame(card, bg=BG_CARD)
+        content.pack(fill='x', padx=16, pady=12)
 
         # Today
-        row1 = ttk.Frame(summary_frame)
-        row1.pack(fill='x', pady=2)
-        ttk.Label(row1, text="Today:", width=15, anchor='w').pack(side='left')
-        self.today_hours = ttk.Label(row1, text="--", width=12, anchor='e')
-        self.today_hours.pack(side='left')
-        self.today_amount = ttk.Label(row1, text="", width=12, anchor='e', foreground='gray')
-        self.today_amount.pack(side='left')
+        row1 = tk.Frame(content, bg=BG_CARD)
+        row1.pack(fill='x', pady=3)
+        tk.Label(row1, text="Today", width=10, anchor='w', bg=BG_CARD,
+                fg=FG_DIM, font=('Segoe UI', 10)).pack(side='left')
+        self.today_hours = tk.Label(row1, text="--", anchor='e',
+                                   bg=BG_CARD, fg=FG, font=('Segoe UI', 10))
+        self.today_hours.pack(side='left', padx=(0, 8))
+        self.today_amount = tk.Label(row1, text="", anchor='e',
+                                    bg=BG_CARD, fg=FG_DIM, font=('Segoe UI', 9))
+        self.today_amount.pack(side='right')
 
         # This week
-        row2 = ttk.Frame(summary_frame)
-        row2.pack(fill='x', pady=2)
-        ttk.Label(row2, text="This Week:", width=15, anchor='w').pack(side='left')
-        self.week_hours = ttk.Label(row2, text="--", width=12, anchor='e')
-        self.week_hours.pack(side='left')
-        self.week_amount = ttk.Label(row2, text="", width=12, anchor='e', foreground='gray')
-        self.week_amount.pack(side='left')
+        row2 = tk.Frame(content, bg=BG_CARD)
+        row2.pack(fill='x', pady=3)
+        tk.Label(row2, text="This Week", width=10, anchor='w', bg=BG_CARD,
+                fg=FG_DIM, font=('Segoe UI', 10)).pack(side='left')
+        self.week_hours = tk.Label(row2, text="--", anchor='e',
+                                  bg=BG_CARD, fg=FG, font=('Segoe UI', 10))
+        self.week_hours.pack(side='left', padx=(0, 8))
+        self.week_amount = tk.Label(row2, text="", anchor='e',
+                                   bg=BG_CARD, fg=FG_DIM, font=('Segoe UI', 9))
+        self.week_amount.pack(side='right')
 
-        # Uninvoiced
-        row3 = ttk.Frame(summary_frame)
-        row3.pack(fill='x', pady=2)
-        ttk.Label(row3, text="Uninvoiced:", width=15, anchor='w').pack(side='left')
-        self.uninvoiced_hours = ttk.Label(row3, text="--", width=12, anchor='e', font=('Segoe UI', 9, 'bold'))
-        self.uninvoiced_hours.pack(side='left')
-        self.uninvoiced_amount = ttk.Label(row3, text="", width=12, anchor='e', foreground='green', font=('Segoe UI', 9, 'bold'))
-        self.uninvoiced_amount.pack(side='left')
+        # Uninvoiced (highlighted)
+        row3 = tk.Frame(content, bg=BG_CARD)
+        row3.pack(fill='x', pady=3)
+        tk.Label(row3, text="Uninvoiced", width=10, anchor='w', bg=BG_CARD,
+                fg=FG, font=('Segoe UI', 10, 'bold')).pack(side='left')
+        self.uninvoiced_hours = tk.Label(row3, text="--", anchor='e',
+                                        bg=BG_CARD, fg=ACCENT, font=('Segoe UI', 10, 'bold'))
+        self.uninvoiced_hours.pack(side='left', padx=(0, 8))
+        self.uninvoiced_amount = tk.Label(row3, text="", anchor='e',
+                                         bg=BG_CARD, fg=SUCCESS, font=('Segoe UI', 10, 'bold'))
+        self.uninvoiced_amount.pack(side='right')
+
+        # Since date (under uninvoiced)
+        self.since_date = tk.Label(content, text="", anchor='e',
+                                   bg=BG_CARD, fg=FG_DIM, font=('Segoe UI', 8))
+        self.since_date.pack(anchor='e', pady=(0, 2))
 
         # Separator
-        ttk.Separator(summary_frame, orient='horizontal').pack(fill='x', pady=5)
+        tk.Frame(content, bg='#3a3a3a', height=1).pack(fill='x', pady=10)
 
-        # Invoiced header
-        ttk.Label(summary_frame, text="Invoiced:", font=('Segoe UI', 9, 'bold')).pack(anchor='w')
+        # Invoiced section header
+        tk.Label(content, text="INVOICED", bg=BG_CARD, fg=FG_DIM,
+                font=('Segoe UI', 8, 'bold'), anchor='w').pack(anchor='w', pady=(0, 4))
 
-        # Unpaid invoices
-        row4 = ttk.Frame(summary_frame)
-        row4.pack(fill='x', pady=2)
-        ttk.Label(row4, text="Unpaid:", width=15, anchor='w').pack(side='left')
-        self.unpaid_amount = ttk.Label(row4, text="--", width=12, anchor='e', foreground='#cc6600', font=('Segoe UI', 9, 'bold'))
+        # Unpaid
+        row4 = tk.Frame(content, bg=BG_CARD)
+        row4.pack(fill='x', pady=3)
+        tk.Label(row4, text="Unpaid", width=10, anchor='w', bg=BG_CARD,
+                fg=FG_DIM, font=('Segoe UI', 10)).pack(side='left')
+        self.unpaid_amount = tk.Label(row4, text="--", anchor='e',
+                                     bg=BG_CARD, fg=WARNING, font=('Segoe UI', 10, 'bold'))
         self.unpaid_amount.pack(side='left')
 
-        # Paid invoices
-        row5 = ttk.Frame(summary_frame)
-        row5.pack(fill='x', pady=2)
-        ttk.Label(row5, text="Paid:", width=15, anchor='w').pack(side='left')
-        self.paid_amount = ttk.Label(row5, text="--", width=12, anchor='e', foreground='gray')
+        # Paid
+        row5 = tk.Frame(content, bg=BG_CARD)
+        row5.pack(fill='x', pady=3)
+        tk.Label(row5, text="Paid", width=10, anchor='w', bg=BG_CARD,
+                fg=FG_DIM, font=('Segoe UI', 10)).pack(side='left')
+        self.paid_amount = tk.Label(row5, text="--", anchor='e',
+                                   bg=BG_CARD, fg=FG_DIM, font=('Segoe UI', 10))
         self.paid_amount.pack(side='left')
-
-        # Build invoice button
-        btn_frame = ttk.Frame(self)
-        btn_frame.pack(fill='x', padx=10, pady=5)
-
-        self.invoice_btn = ttk.Button(
-            btn_frame,
-            text="Build Invoice",
-            command=self._on_build_invoice,
-            state='disabled'
-        )
-        self.invoice_btn.pack(side='right')
 
     def set_client(self, client: Optional[Dict]):
         """Set the current client and refresh summary."""
@@ -98,17 +122,16 @@ class TimeSummaryPanel(ttk.Frame):
             self.week_amount.config(text="(all clients)")
 
             self.uninvoiced_hours.config(text=timer_engine.format_hours(summary['uninvoiced_hours']))
+            self.uninvoiced_amount.config(text="")  # No dollar amount for global view
             first_date = db.get_first_uninvoiced_date()
             if first_date and summary['uninvoiced_hours'] > 0:
-                self.uninvoiced_amount.config(text=f"(since {first_date})")
+                self.since_date.config(text=f"since {first_date}")
             else:
-                self.uninvoiced_amount.config(text="(all clients)")
+                self.since_date.config(text="")
 
             # Show actual invoice amounts
             self.unpaid_amount.config(text=timer_engine.format_currency(summary['invoiced_amount']))
             self.paid_amount.config(text=timer_engine.format_currency(summary['paid_amount']))
-
-            self.invoice_btn.config(state='disabled')
             return
 
         summary = db.get_time_summary(self.client['id'])
@@ -124,24 +147,16 @@ class TimeSummaryPanel(ttk.Frame):
 
         # Uninvoiced
         self.uninvoiced_hours.config(text=timer_engine.format_hours(summary['uninvoiced_hours']))
+        uninvoiced_dollars = summary['uninvoiced_hours'] * rate
+        self.uninvoiced_amount.config(text=timer_engine.format_currency(uninvoiced_dollars))
         first_date = db.get_first_uninvoiced_date(self.client['id'])
         if first_date and summary['uninvoiced_hours'] > 0:
-            self.uninvoiced_amount.config(text=f"(since {first_date})")
+            self.since_date.config(text=f"since {first_date}")
         else:
-            self.uninvoiced_amount.config(text=f"({timer_engine.format_currency(summary['uninvoiced_hours'] * rate)})")
+            self.since_date.config(text="")
 
         # Unpaid invoices (actual invoice amounts)
         self.unpaid_amount.config(text=timer_engine.format_currency(summary['invoiced_amount']))
 
         # Paid invoices (actual invoice amounts)
         self.paid_amount.config(text=timer_engine.format_currency(summary['paid_amount']))
-
-        # Enable invoice button if there's uninvoiced time
-        if summary['uninvoiced_hours'] > 0:
-            self.invoice_btn.config(state='normal')
-        else:
-            self.invoice_btn.config(state='disabled')
-
-    def _on_build_invoice(self):
-        """Handle build invoice button click."""
-        self.event_generate('<<BuildInvoice>>')

@@ -43,42 +43,44 @@ class TestClients:
 
     def test_save_client(self, temp_db):
         """Test creating a new client."""
-        client_id = db.save_client("Test Client", 100.0)
+        client_id = db.save_client("Test Contact", "Test Company", 100.0)
         assert client_id > 0
 
         client = db.get_client(client_id)
         assert client is not None
-        assert client['name'] == "Test Client"
+        assert client['contact_name'] == "Test Contact"
+        assert client['company_name'] == "Test Company"
         assert client['hourly_rate'] == 100.0
         assert client['track_activity'] == 1  # Default on
 
     def test_save_client_with_track_activity_off(self, temp_db):
         """Test creating client with activity tracking disabled."""
-        client_id = db.save_client("No Track Client", 50.0, track_activity=False)
+        client_id = db.save_client("No Track", "", 50.0, track_activity=False)
         client = db.get_client(client_id)
         assert client['track_activity'] == 0
 
     def test_update_client(self, temp_db):
         """Test updating a client."""
-        client_id = db.save_client("Original Name", 100.0)
-        db.update_client(client_id, "Updated Name", 150.0, track_activity=False)
+        client_id = db.save_client("Original", "", 100.0)
+        db.update_client(client_id, "Updated", "New Company", 150.0, track_activity=False)
 
         client = db.get_client(client_id)
-        assert client['name'] == "Updated Name"
+        assert client['contact_name'] == "Updated"
+        assert client['company_name'] == "New Company"
         assert client['hourly_rate'] == 150.0
         assert client['track_activity'] == 0
 
     def test_get_clients(self, temp_db):
         """Test getting all clients."""
-        db.save_client("Client A", 100.0)
-        db.save_client("Client B", 200.0)
+        db.save_client("Client A", "", 100.0)
+        db.save_client("Client B", "", 200.0)
 
         clients = db.get_clients()
         assert len(clients) == 2
 
     def test_toggle_favorite(self, temp_db):
         """Test toggling client favorite status."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
 
         # Initially not favorite
         client = db.get_client(client_id)
@@ -98,7 +100,7 @@ class TestClients:
 
     def test_archive_client(self, temp_db):
         """Test archiving a client."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
         db.archive_client(client_id)
 
         # Should not appear in normal list
@@ -111,7 +113,7 @@ class TestClients:
 
     def test_delete_client_no_entries(self, temp_db):
         """Test deleting client with no time entries."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
         db.delete_client(client_id)
 
         client = db.get_client(client_id)
@@ -119,7 +121,7 @@ class TestClients:
 
     def test_delete_client_with_entries_fails(self, temp_db):
         """Test that deleting client with entries raises error."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
         db.save_time_entry(client_id, datetime.now(), duration_seconds=3600)
 
         with pytest.raises(ValueError):
@@ -131,7 +133,7 @@ class TestTimeEntries:
 
     def test_save_time_entry(self, temp_db):
         """Test saving a time entry."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
         start = datetime.now()
         end = start + timedelta(hours=2)
 
@@ -153,7 +155,7 @@ class TestTimeEntries:
 
     def test_save_time_entry_with_activity(self, temp_db):
         """Test saving time entry with activity stats."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
 
         entry_id = db.save_time_entry(
             client_id=client_id,
@@ -171,7 +173,7 @@ class TestTimeEntries:
 
     def test_update_time_entry(self, temp_db):
         """Test updating a time entry."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
         entry_id = db.save_time_entry(client_id, datetime.now(), duration_seconds=3600)
 
         db.update_time_entry(entry_id, duration_seconds=7200, description="Updated")
@@ -182,7 +184,7 @@ class TestTimeEntries:
 
     def test_delete_time_entry(self, temp_db):
         """Test deleting a time entry."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
         entry_id = db.save_time_entry(client_id, datetime.now(), duration_seconds=3600)
 
         result = db.delete_time_entry(entry_id)
@@ -193,7 +195,7 @@ class TestTimeEntries:
 
     def test_delete_invoiced_entry_fails(self, temp_db):
         """Test that deleting invoiced entry raises error."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
         entry_id = db.save_time_entry(client_id, datetime.now(), duration_seconds=3600)
 
         # Mark as invoiced
@@ -204,7 +206,7 @@ class TestTimeEntries:
 
     def test_get_time_entries_filtered(self, temp_db):
         """Test filtering time entries."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
 
         # Create uninvoiced entry
         entry1 = db.save_time_entry(client_id, datetime.now(), duration_seconds=3600)
@@ -228,7 +230,7 @@ class TestTimeSummary:
 
     def test_client_summary_uninvoiced(self, temp_db):
         """Test uninvoiced hours in client summary."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
 
         # Add 2 hours uninvoiced
         db.save_time_entry(client_id, datetime.now(), duration_seconds=7200)
@@ -240,7 +242,7 @@ class TestTimeSummary:
 
     def test_client_summary_with_invoice(self, temp_db):
         """Test summary with invoiced hours."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
 
         # Create an invoice with hours
         conn = db.get_connection()
@@ -265,7 +267,7 @@ class TestTimeSummary:
 
     def test_client_summary_with_paid_invoice(self, temp_db):
         """Test summary with paid invoice."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
 
         # Create a paid invoice with hours
         conn = db.get_connection()
@@ -290,8 +292,8 @@ class TestTimeSummary:
 
     def test_global_summary(self, temp_db):
         """Test global summary across all clients."""
-        client1 = db.save_client("Client 1", 100.0)
-        client2 = db.save_client("Client 2", 150.0)
+        client1 = db.save_client("Client 1", "", 100.0)
+        client2 = db.save_client("Client 2", "", 150.0)
 
         # Add hours to both
         db.save_time_entry(client1, datetime.now(), duration_seconds=3600)  # 1 hr
@@ -311,7 +313,7 @@ class TestInvoices:
 
     def test_mark_invoice_paid(self, temp_db):
         """Test marking invoice as paid."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
 
         # Create invoice
         conn = db.get_connection()
@@ -334,7 +336,7 @@ class TestInvoices:
 
     def test_record_partial_payment(self, temp_db):
         """Test recording partial payment."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
 
         # Create invoice for $500
         conn = db.get_connection()
@@ -369,7 +371,7 @@ class TestActiveTimer:
 
     def test_save_and_get_active_timer(self, temp_db):
         """Test saving and retrieving active timer."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
         start_time = datetime.now()
 
         db.save_active_timer(client_id, start_time, 3600)
@@ -381,7 +383,7 @@ class TestActiveTimer:
 
     def test_update_active_timer(self, temp_db):
         """Test updating active timer."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
         db.save_active_timer(client_id, datetime.now(), 0)
 
         db.update_active_timer(7200)
@@ -391,7 +393,7 @@ class TestActiveTimer:
 
     def test_clear_active_timer(self, temp_db):
         """Test clearing active timer."""
-        client_id = db.save_client("Test", 100.0)
+        client_id = db.save_client("Test", "", 100.0)
         db.save_active_timer(client_id, datetime.now(), 0)
 
         db.clear_active_timer()

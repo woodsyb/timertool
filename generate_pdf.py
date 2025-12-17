@@ -151,15 +151,21 @@ def generate_invoice_pdf(invoice_number: str) -> Path:
         ('TOPPADDING', (0, 0), (-1, -1), 4),
     ]))
 
-    # Build client info
-    client_lines = [
-        "<b>Bill To:</b>",
-        invoice['client_name'],
-    ]
-    if invoice.get('contact_name'):
-        client_lines.append(invoice['contact_name'])
+    # Build client info - format:
+    # Bill To:
+    # Attn: [bill_to] (if set)
+    # [company_name]
+    # [address]
+    # [address2] (if set)
+    # [city], [state] [zip]
+    client_lines = ["<b>Bill To:</b>"]
+    if invoice.get('bill_to'):
+        client_lines.append(f"Attn: {invoice['bill_to']}")
+    client_lines.append(invoice['client_name'])
     if invoice.get('client_address'):
         client_lines.append(invoice['client_address'])
+    if invoice.get('client_address2'):
+        client_lines.append(invoice['client_address2'])
     if invoice.get('client_city') or invoice.get('client_state') or invoice.get('client_zip'):
         city_state_zip = ', '.join(filter(None, [
             invoice.get('client_city'),
@@ -226,19 +232,34 @@ def generate_invoice_pdf(invoice_number: str) -> Path:
             f"Routing Number: {banking['routing_number']}<br/>"
             f"Account Number: {banking['account_number']}"
         )
-    elif invoice['payment_method'] == 'Wire':
+    elif invoice['payment_method'] == 'Domestic Wire':
+        wire_info = banking.get('domestic_wire_instructions') or (
+            f"Bank: {banking['bank_name']}\n"
+            f"Routing: {banking['routing_number']}\n"
+            f"Account: {banking['account_number']}"
+        )
+        payment_text = f"<b>Domestic Wire Transfer</b><br/>{wire_info.replace(chr(10), '<br/>')}"
+    elif invoice['payment_method'] in ('Wire', 'International Wire'):
         wire_info = banking.get('wire_instructions') or (
             f"Bank: {banking['bank_name']}\n"
             f"Routing: {banking['routing_number']}\n"
             f"Account: {banking['account_number']}"
         )
         payment_text = f"<b>Wire Transfer</b><br/>{wire_info.replace(chr(10), '<br/>')}"
-    else:
+    elif invoice['payment_method'] == 'Check':
         payment_text = (
             f"<b>Check</b><br/>"
             f"Make payable to: {business['company_name']}<br/>"
             f"Mail to: {business['address']}, {business['city']}, {business['state']} {business['zip']}"
         )
+    elif invoice['payment_method'] == 'PayPal':
+        paypal_email = banking.get('paypal_email') or business.get('email', '')
+        payment_text = f"<b>PayPal</b><br/>Send payment to: {paypal_email}"
+    elif invoice['payment_method'] == 'Credit Card':
+        cc_info = banking.get('credit_card_instructions') or 'Contact for credit card payment details.'
+        payment_text = f"<b>Credit Card</b><br/>{cc_info.replace(chr(10), '<br/>')}"
+    else:
+        payment_text = f"<b>{invoice['payment_method']}</b><br/>Contact for payment details."
 
     elements.append(Paragraph(payment_text, styles['PaymentInfo']))
     elements.append(Spacer(1, 0.25*inch))

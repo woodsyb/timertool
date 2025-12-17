@@ -9,6 +9,13 @@ import timer_engine
 class TimerDisplayPanel(ttk.Frame):
     """Panel showing the stopwatch and controls."""
 
+    # Dark theme colors (sv_ttk compatible)
+    BG = '#1c1c1c'
+    BG_CARD = '#2a2a2a'
+    FG = '#fafafa'
+    FG_DIM = '#9e9e9e'
+    ACCENT = '#0078d4'
+
     def __init__(self, parent, engine: timer_engine.TimerEngine):
         super().__init__(parent)
         self.engine = engine
@@ -19,72 +26,74 @@ class TimerDisplayPanel(ttk.Frame):
         self._update_display()
 
     def _create_widgets(self):
-        # Time display
-        self.time_label = ttk.Label(
-            self,
+        # Timer display area
+        timer_area = tk.Frame(self, bg=self.BG)
+        timer_area.pack(fill='both', expand=True)
+
+        # Time display - large and prominent
+        self.time_label = tk.Label(
+            timer_area,
             text="00:00:00",
             font=('Consolas', 48, 'bold'),
-            anchor='center'
+            fg=self.ACCENT,
+            bg=self.BG
         )
-        self.time_label.pack(pady=(20, 10))
+        self.time_label.pack(pady=(30, 12))
 
         # Client info
-        self.client_label = ttk.Label(
-            self,
+        self.client_label = tk.Label(
+            timer_area,
             text="Select a client",
-            font=('Segoe UI', 12),
-            anchor='center'
+            font=('Segoe UI', 14),
+            fg=self.FG,
+            bg=self.BG
         )
-        self.client_label.pack(pady=5)
+        self.client_label.pack(pady=4)
 
-        self.rate_label = ttk.Label(
-            self,
+        self.rate_label = tk.Label(
+            timer_area,
             text="",
             font=('Segoe UI', 10),
-            foreground='gray',
-            anchor='center'
+            fg=self.FG_DIM,
+            bg=self.BG
         )
         self.rate_label.pack(pady=2)
 
-        # Activity stats (shown when timer running)
-        self.activity_label = ttk.Label(
-            self,
+        # Activity stats
+        self.activity_label = tk.Label(
+            timer_area,
             text="",
             font=('Segoe UI', 9),
-            foreground='#666666',
-            anchor='center'
+            fg='#666666',
+            bg=self.BG
         )
-        self.activity_label.pack(pady=2)
+        self.activity_label.pack(pady=(8, 16))
 
-        # Control buttons
-        btn_frame = ttk.Frame(self)
-        btn_frame.pack(pady=20)
+        # Control buttons - centered with good spacing
+        btn_frame = tk.Frame(self, bg=self.BG)
+        btn_frame.pack(fill='x', pady=(0, 16))
+
+        # Center the buttons
+        btn_inner = tk.Frame(btn_frame, bg=self.BG)
+        btn_inner.pack()
 
         self.start_btn = ttk.Button(
-            btn_frame,
+            btn_inner,
             text="START",
             command=self._on_start_stop,
-            width=12
+            width=14,
+            style='Accent.TButton'
         )
-        self.start_btn.pack(side='left', padx=5)
+        self.start_btn.pack(side='left', padx=6)
 
-        self.pause_btn = ttk.Button(
-            btn_frame,
-            text="PAUSE",
-            command=self._on_pause_resume,
+        self.manual_btn = ttk.Button(
+            btn_inner,
+            text="+ Manual",
+            command=self._on_manual_entry,
             width=12,
             state='disabled'
         )
-        self.pause_btn.pack(side='left', padx=5)
-
-        # Manual entry button
-        self.manual_btn = ttk.Button(
-            self,
-            text="+ Manual Entry",
-            command=self._on_manual_entry,
-            state='disabled'
-        )
-        self.manual_btn.pack(pady=10)
+        self.manual_btn.pack(side='left', padx=6)
 
     def set_client(self, client: Optional[Dict]):
         """Set the current client."""
@@ -110,25 +119,67 @@ class TimerDisplayPanel(ttk.Frame):
                 track_activity = self.client.get('track_activity', 1)
                 self.engine.start(self.client['id'], track_activity=bool(track_activity))
                 self.start_btn.config(text="STOP")
-                self.pause_btn.config(state='normal', text="PAUSE")
                 self._start_update_loop()
         else:
-            self.engine.stop()
+            # Show memo dialog
+            memo = self._ask_memo()
+            self.engine.stop(description=memo)
             self.start_btn.config(text="START")
-            self.pause_btn.config(state='disabled', text="PAUSE")
             self._stop_update_loop()
             self._update_display()
             # Notify parent to refresh summary
             self.event_generate('<<TimerStopped>>')
 
-    def _on_pause_resume(self):
-        """Handle pause/resume button click."""
-        if self.engine.state == 'running':
-            self.engine.pause()
-            self.pause_btn.config(text="RESUME")
-        elif self.engine.state == 'paused':
-            self.engine.resume()
-            self.pause_btn.config(text="PAUSE")
+    def _ask_memo(self) -> str:
+        """Show a simple dialog to enter an optional memo. Pre-fills with last memo for this client."""
+        import db
+        from tkinter import simpledialog
+
+        # Get last memo for this client
+        last_memo = ''
+        if self.client:
+            entries = db.get_time_entries(client_id=self.client['id'], limit=1)
+            if entries and entries[0].get('description'):
+                last_memo = entries[0]['description']
+
+        # Simple dialog
+        dialog = tk.Toplevel(self)
+        dialog.title("Time Entry Memo")
+        dialog.configure(bg='#1c1c1c')
+        dialog.transient(self.winfo_toplevel())
+        dialog.grab_set()
+
+        dialog.geometry('+%d+%d' % (self.winfo_rootx() + 50, self.winfo_rooty() + 50))
+
+        tk.Label(dialog, text="What was this time for? (optional)",
+                bg='#1c1c1c', fg='#ffffff', font=('Segoe UI', 10)).pack(padx=15, pady=(15, 5))
+
+        memo_var = tk.StringVar(value=last_memo)
+        entry = ttk.Entry(dialog, textvariable=memo_var, width=40)
+        entry.pack(padx=15, pady=5)
+        entry.select_range(0, tk.END)
+        entry.focus_set()
+
+        result = {'memo': last_memo}
+
+        def on_ok(event=None):
+            result['memo'] = memo_var.get().strip()
+            dialog.destroy()
+
+        def on_skip(event=None):
+            result['memo'] = ''
+            dialog.destroy()
+
+        btn_frame = tk.Frame(dialog, bg='#1c1c1c')
+        btn_frame.pack(pady=(5, 15))
+        ttk.Button(btn_frame, text="Save", command=on_ok).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Skip", command=on_skip).pack(side='left', padx=5)
+
+        entry.bind('<Return>', on_ok)
+        entry.bind('<Escape>', on_skip)
+
+        dialog.wait_window()
+        return result['memo']
 
     def _on_manual_entry(self):
         """Handle manual entry button click."""
@@ -166,14 +217,12 @@ class TimerDisplayPanel(ttk.Frame):
         state = self.engine.state
         if state == 'stopped':
             self.start_btn.config(text="START")
-            self.pause_btn.config(state='disabled', text="PAUSE")
             self._stop_update_loop()
         elif state == 'running':
             self.start_btn.config(text="STOP")
-            self.pause_btn.config(state='normal', text="PAUSE")
             self._start_update_loop()
         elif state == 'paused':
+            # Paused state used internally (idle detection)
             self.start_btn.config(text="STOP")
-            self.pause_btn.config(state='normal', text="RESUME")
             self._stop_update_loop()
         self._update_display()

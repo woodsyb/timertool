@@ -33,45 +33,85 @@ class MainWindow(ttk.Frame):
         self._check_recovery()
 
     def _create_widgets(self):
-        # Main container with two columns
-        self.columnconfigure(1, weight=1)
+        # Dark theme (sv_ttk compatible)
+        self.BG = '#1c1c1c'
+
+        # Container that holds either client list OR timer view
+        self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
 
-        # Left panel - client list
-        left_frame = ttk.Frame(self, width=260)
-        left_frame.grid(row=0, column=0, sticky='nsew', padx=(5, 0), pady=5)
-        left_frame.grid_propagate(False)
+        # Client list view (shown first)
+        self.client_view = tk.Frame(self, bg=self.BG)
+        self.client_view.grid(row=0, column=0, sticky='nsew')
+        self.client_view.columnconfigure(0, weight=1)
+        self.client_view.rowconfigure(0, weight=1)
 
-        self.client_panel = ClientListPanel(left_frame, self._on_client_selected)
-        self.client_panel.pack(fill='both', expand=True)
+        self.client_panel = ClientListPanel(self.client_view, self._on_client_selected)
+        self.client_panel.pack(fill='both', expand=True, padx=4, pady=4)
 
-        # Right panel - timer and summary
-        right_frame = ttk.Frame(self)
-        right_frame.grid(row=0, column=1, sticky='nsew', padx=5, pady=5)
-        right_frame.rowconfigure(0, weight=1)
-        right_frame.columnconfigure(0, weight=1)
+        # Timer view (shown when client selected)
+        self.timer_view = tk.Frame(self, bg=self.BG)
+        self.timer_view.columnconfigure(0, weight=1)
+        self.timer_view.rowconfigure(1, weight=1)
 
-        # Timer display
-        self.timer_panel = TimerDisplayPanel(right_frame, self.engine)
-        self.timer_panel.grid(row=0, column=0, sticky='nsew')
+        # Back button header
+        header = tk.Frame(self.timer_view, bg=self.BG)
+        header.grid(row=0, column=0, sticky='ew', padx=8, pady=(8, 0))
+
+        self.back_btn = tk.Label(
+            header,
+            text="< Back",
+            font=('Segoe UI', 10),
+            bg=self.BG,
+            fg='#4fc3f7',
+            cursor='hand2'
+        )
+        self.back_btn.pack(side='left')
+        self.back_btn.bind('<Button-1>', lambda e: self._show_client_list())
+        self.back_btn.bind('<Enter>', lambda e: self.back_btn.config(fg='#81c784'))
+        self.back_btn.bind('<Leave>', lambda e: self.back_btn.config(fg='#4fc3f7'))
+
+        # Minimize to tray
+        if self.on_minimize_to_tray:
+            tray_btn = tk.Label(
+                header,
+                text="[_]",
+                font=('Consolas', 9),
+                bg=self.BG,
+                fg='#666666',
+                cursor='hand2'
+            )
+            tray_btn.pack(side='right')
+            tray_btn.bind('<Button-1>', lambda e: self.on_minimize_to_tray())
+            tray_btn.bind('<Enter>', lambda e: tray_btn.config(fg='#4fc3f7'))
+            tray_btn.bind('<Leave>', lambda e: tray_btn.config(fg='#666666'))
+
+        # Timer content
+        timer_content = tk.Frame(self.timer_view, bg=self.BG)
+        timer_content.grid(row=1, column=0, sticky='nsew', padx=4, pady=4)
+        timer_content.columnconfigure(0, weight=1)
+        timer_content.rowconfigure(0, weight=1)
+
+        self.timer_panel = TimerDisplayPanel(timer_content, self.engine)
+        self.timer_panel.pack(fill='both', expand=True)
 
         # Time summary
-        self.summary_panel = TimeSummaryPanel(right_frame)
-        self.summary_panel.grid(row=1, column=0, sticky='ew', pady=(10, 0))
+        self.summary_panel = TimeSummaryPanel(timer_content)
+        self.summary_panel.pack(fill='x')
 
         # Bind events
         self.timer_panel.bind('<<TimerStopped>>', lambda e: self._refresh_summary())
         self.timer_panel.bind('<<ManualEntry>>', lambda e: self._show_manual_entry())
-        self.summary_panel.bind('<<BuildInvoice>>', lambda e: self._show_build_invoice())
 
     def _create_menu(self, parent):
-        """Create the menu bar."""
-        menubar = tk.Menu(parent)
-        parent.config(menu=menubar)
+        """Create the menu bar (hidden by default, show with Alt)."""
+        self.menubar = tk.Menu(parent)
+        self.menu_parent = parent
+        self.menu_visible = False
 
         # File menu
-        file_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="File", menu=file_menu)
+        file_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="File", menu=file_menu)
         file_menu.add_command(label="Open Invoices Folder", command=self._open_invoices_folder)
         if self.on_minimize_to_tray:
             file_menu.add_command(label="Minimize to Tray", command=self.on_minimize_to_tray)
@@ -79,24 +119,71 @@ class MainWindow(ttk.Frame):
         file_menu.add_command(label="Exit", command=self._do_exit)
 
         # Edit menu
-        edit_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Edit", menu=edit_menu)
+        edit_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="Edit", menu=edit_menu)
         edit_menu.add_command(label="Business Setup...", command=self._show_business_setup)
         edit_menu.add_command(label="Settings...", command=self._show_settings)
 
         # View menu
-        view_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="View", menu=view_menu)
+        view_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="View", menu=view_menu)
         view_menu.add_command(label="Time Entries...", command=self._show_time_entries)
         view_menu.add_command(label="Invoices...", command=self._show_invoices)
         view_menu.add_separator()
         view_menu.add_command(label="Refresh", command=self._refresh_all)
 
+        # Actions menu
+        actions_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="Actions", menu=actions_menu)
+        actions_menu.add_command(label="Build Invoice...", command=self._show_build_invoice)
+
+        # Bind Alt to toggle menu
+        parent.bind('<Alt_L>', self._toggle_menu)
+        parent.bind('<Alt_R>', self._toggle_menu)
+        parent.bind('<FocusOut>', lambda e: self._hide_menu())
+
+    def _toggle_menu(self, event=None):
+        """Toggle menu bar visibility."""
+        if self.menu_visible:
+            self._hide_menu()
+        else:
+            self._show_menu()
+
+    def _show_menu(self):
+        """Show the menu bar."""
+        self.menu_parent.config(menu=self.menubar)
+        self.menu_visible = True
+
+    def _hide_menu(self):
+        """Hide the menu bar."""
+        self.menu_parent.config(menu='')
+        self.menu_visible = False
+
     def _on_client_selected(self, client: Optional[Dict]):
-        """Handle client selection."""
+        """Handle client selection - switch to timer view."""
         self.current_client = client
         self.timer_panel.set_client(client)
         self.summary_panel.set_client(client)
+        if client:
+            self._show_timer_view()
+
+    def _show_timer_view(self):
+        """Show the timer view, hide client list."""
+        self.client_view.grid_remove()
+        self.timer_view.grid(row=0, column=0, sticky='nsew')
+
+    def _show_client_list(self):
+        """Show the client list, hide timer view."""
+        # Don't allow going back if timer is running
+        if self.engine.state == 'running':
+            from tkinter import messagebox
+            messagebox.showwarning("Timer Running", "Stop the timer before going back.", parent=self)
+            return
+        self.timer_view.grid_remove()
+        self.client_view.grid(row=0, column=0, sticky='nsew')
+        self.current_client = None
+        self.timer_panel.set_client(None)
+        self.summary_panel.set_client(None)
 
     def _on_timer_state_change(self, state: str):
         """Handle timer state changes."""

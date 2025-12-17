@@ -1,13 +1,18 @@
 # -*- mode: python ; coding: utf-8 -*-
 # PyInstaller spec file for Timer Tool
 
+from PyInstaller.utils.hooks import collect_data_files
+
 block_cipher = None
+
+# Collect sv_ttk theme files
+sv_ttk_datas = collect_data_files('sv_ttk')
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=sv_ttk_datas,
     hiddenimports=[
         'pystray._win32',
         'PIL._tkinter_finder',
@@ -20,6 +25,8 @@ a = Analysis(
         'pynput.mouse._win32',
         'pynput._util',
         'pynput._util.win32',
+        'sv_ttk',
+        'pywinstyles',
     ],
     hookspath=[],
     hooksconfig={},
