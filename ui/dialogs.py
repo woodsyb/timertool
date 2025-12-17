@@ -30,7 +30,7 @@ class ManualEntryDialog(tk.Toplevel):
 
         # Client display
         ttk.Label(frame, text=f"Client: {self.client['name']}", font=('Segoe UI', 10, 'bold')).grid(
-            row=0, column=0, columnspan=2, sticky='w', pady=(0, 10)
+            row=0, column=0, columnspan=3, sticky='w', pady=(0, 10)
         )
 
         # Date
@@ -38,21 +38,56 @@ class ManualEntryDialog(tk.Toplevel):
         self.date_entry = DateEntry(frame, width=20, date_pattern='yyyy-mm-dd')
         self.date_entry.grid(row=1, column=1, sticky='w', pady=2)
 
-        # Hours
-        ttk.Label(frame, text="Hours:").grid(row=2, column=0, sticky='w', pady=2)
+        # Entry mode selector
+        ttk.Label(frame, text="Entry Type:").grid(row=2, column=0, sticky='w', pady=2)
+        self.mode_var = tk.StringVar(value='hours')
+        mode_frame = ttk.Frame(frame)
+        mode_frame.grid(row=2, column=1, columnspan=2, sticky='w', pady=2)
+        ttk.Radiobutton(mode_frame, text="Hours", variable=self.mode_var, value='hours',
+                       command=self._toggle_mode).pack(side='left', padx=(0, 10))
+        ttk.Radiobutton(mode_frame, text="Time Range", variable=self.mode_var, value='range',
+                       command=self._toggle_mode).pack(side='left')
+
+        # Hours entry (default)
+        self.hours_frame = ttk.Frame(frame)
+        self.hours_frame.grid(row=3, column=0, columnspan=3, sticky='w', pady=2)
+        ttk.Label(self.hours_frame, text="Hours:").pack(side='left')
         self.hours_var = tk.StringVar()
-        self.hours_entry = ttk.Entry(frame, textvariable=self.hours_var, width=10)
-        self.hours_entry.grid(row=2, column=1, sticky='w', pady=2)
-        ttk.Label(frame, text="(e.g., 1.5 for 1 hour 30 min)").grid(row=2, column=2, sticky='w', padx=(5, 0))
+        self.hours_entry = ttk.Entry(self.hours_frame, textvariable=self.hours_var, width=10)
+        self.hours_entry.pack(side='left', padx=(5, 5))
+        ttk.Label(self.hours_frame, text="(e.g., 1.5 for 1h 30m)").pack(side='left')
+
+        # Time range entry (hidden by default) - 24 hour format
+        self.range_frame = ttk.Frame(frame)
+        self.range_frame.grid(row=3, column=0, columnspan=3, sticky='w', pady=2)
+        hours_24 = [f"{i:02d}" for i in range(0, 24)]
+        mins = ['00', '15', '30', '45']
+        ttk.Label(self.range_frame, text="Start:").pack(side='left')
+        self.start_hour = ttk.Combobox(self.range_frame, width=3, values=hours_24)
+        self.start_hour.set("09")
+        self.start_hour.pack(side='left', padx=2)
+        ttk.Label(self.range_frame, text=":").pack(side='left')
+        self.start_min = ttk.Combobox(self.range_frame, width=3, values=mins)
+        self.start_min.set("00")
+        self.start_min.pack(side='left', padx=(0, 10))
+        ttk.Label(self.range_frame, text="End:").pack(side='left')
+        self.end_hour = ttk.Combobox(self.range_frame, width=3, values=hours_24)
+        self.end_hour.set("17")
+        self.end_hour.pack(side='left', padx=2)
+        ttk.Label(self.range_frame, text=":").pack(side='left')
+        self.end_min = ttk.Combobox(self.range_frame, width=3, values=mins)
+        self.end_min.set("00")
+        self.end_min.pack(side='left')
+        self.range_frame.grid_remove()  # Hide by default
 
         # Description
-        ttk.Label(frame, text="Description:").grid(row=3, column=0, sticky='nw', pady=2)
+        ttk.Label(frame, text="Description:").grid(row=4, column=0, sticky='nw', pady=2)
         self.desc_text = tk.Text(frame, width=40, height=3)
-        self.desc_text.grid(row=3, column=1, columnspan=2, sticky='w', pady=2)
+        self.desc_text.grid(row=4, column=1, columnspan=2, sticky='w', pady=2)
 
         # Buttons
         btn_frame = ttk.Frame(frame)
-        btn_frame.grid(row=4, column=0, columnspan=3, pady=(15, 0))
+        btn_frame.grid(row=5, column=0, columnspan=3, pady=(15, 0))
 
         ttk.Button(btn_frame, text="Save", command=self._save).pack(side='left', padx=5)
         ttk.Button(btn_frame, text="Cancel", command=self.destroy).pack(side='left', padx=5)
@@ -60,23 +95,56 @@ class ManualEntryDialog(tk.Toplevel):
         self.hours_entry.focus_set()
         self.bind('<Escape>', lambda e: self.destroy())
 
+    def _toggle_mode(self):
+        """Toggle between hours and time range mode."""
+        if self.mode_var.get() == 'hours':
+            self.range_frame.grid_remove()
+            self.hours_frame.grid()
+        else:
+            self.hours_frame.grid_remove()
+            self.range_frame.grid()
+
     def _save(self):
         """Validate and save the entry."""
-        try:
-            hours = float(self.hours_var.get())
-            if hours <= 0:
-                raise ValueError()
-        except ValueError:
-            messagebox.showerror("Error", "Please enter a valid number of hours.", parent=self)
-            return
-
         date = self.date_entry.get_date()
         description = self.desc_text.get('1.0', 'end').strip()
 
-        # Create start/end times for the entry
-        start_time = datetime.combine(date, datetime.min.time().replace(hour=9))
-        duration_seconds = int(hours * 3600)
-        end_time = start_time + timedelta(seconds=duration_seconds)
+        if self.mode_var.get() == 'hours':
+            # Bulk hours mode
+            try:
+                hours = float(self.hours_var.get())
+                if hours <= 0:
+                    raise ValueError()
+            except ValueError:
+                messagebox.showerror("Error", "Please enter a valid number of hours.", parent=self)
+                return
+
+            start_time = datetime.combine(date, datetime.min.time().replace(hour=9))
+            duration_seconds = int(hours * 3600)
+            end_time = start_time + timedelta(seconds=duration_seconds)
+        else:
+            # Time range mode
+            try:
+                start_h = int(self.start_hour.get())
+                start_m = int(self.start_min.get())
+                end_h = int(self.end_hour.get())
+                end_m = int(self.end_min.get())
+
+                start_time = datetime.combine(date, datetime.min.time().replace(hour=start_h, minute=start_m))
+                end_time = datetime.combine(date, datetime.min.time().replace(hour=end_h, minute=end_m))
+
+                # Handle overnight (end time before start time)
+                if end_time <= start_time:
+                    end_time += timedelta(days=1)
+
+                duration_seconds = int((end_time - start_time).total_seconds())
+                hours = duration_seconds / 3600
+
+                if duration_seconds <= 0:
+                    raise ValueError()
+            except (ValueError, TypeError):
+                messagebox.showerror("Error", "Please enter valid start and end times.", parent=self)
+                return
 
         self.result = {
             'date': date,
