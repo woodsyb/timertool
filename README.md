@@ -41,6 +41,9 @@ python main.py
 pip install pyinstaller
 pyinstaller TimerTool.spec
 # Output: dist/TimerTool.exe
+
+# Move exe to main folder (needs access to data/ and invoices/)
+move dist\TimerTool.exe .
 ```
 
 ## Usage
