@@ -179,11 +179,21 @@ class TimerApp:
         self.root.after(0, self._do_quit)
 
     def _on_close(self):
-        """Handle window close - minimize to tray or quit."""
-        if TRAY_AVAILABLE and self.tray_icon:
-            self._minimize_to_tray()
-        else:
-            self._do_quit()
+        """Handle window close - confirm if timer running."""
+        if self.engine.state in ('running', 'paused'):
+            from tkinter import messagebox
+            result = messagebox.askyesnocancel(
+                "Timer Running",
+                "Timer is still running. Stop timer and exit?",
+                parent=self.root
+            )
+            if result is None:  # Cancel
+                return
+            elif result:  # Yes - stop and exit
+                self.engine.stop()
+            else:  # No - just exit without saving
+                pass
+        self._do_quit()
 
     def _do_quit(self):
         """Actually quit the application."""

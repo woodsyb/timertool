@@ -92,7 +92,25 @@ def init_db():
     if 'intl_wire_instructions' not in banking_cols:
         cursor.execute("ALTER TABLE banking ADD COLUMN intl_wire_instructions TEXT")
 
-    # Clients - add columns if not present
+    # Clients table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS clients (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_name TEXT NOT NULL,
+            contact_name TEXT,
+            address TEXT,
+            city TEXT,
+            state TEXT,
+            zip TEXT,
+            email TEXT,
+            payment_preference TEXT,
+            hourly_rate REAL DEFAULT 0,
+            favorite INTEGER DEFAULT 0,
+            archived INTEGER DEFAULT 0,
+            track_activity INTEGER DEFAULT 1
+        )
+    """)
+    # Add columns if not present (for migration from old schema)
     cursor.execute("PRAGMA table_info(clients)")
     columns = [row[1] for row in cursor.fetchall()]
     if 'hourly_rate' not in columns:
@@ -707,6 +725,19 @@ def get_global_time_summary() -> Dict[str, float]:
     """)
     paid_hours = cursor.fetchone()['total']
 
+    # Invoice amounts (includes flat rate invoices)
+    cursor.execute("""
+        SELECT COALESCE(SUM(total), 0) as total
+        FROM invoices WHERE status != 'paid'
+    """)
+    invoiced_amount = cursor.fetchone()['total']
+
+    cursor.execute("""
+        SELECT COALESCE(SUM(total), 0) as total
+        FROM invoices WHERE status = 'paid'
+    """)
+    paid_amount = cursor.fetchone()['total']
+
     conn.close()
 
     return {
@@ -715,6 +746,8 @@ def get_global_time_summary() -> Dict[str, float]:
         'uninvoiced_hours': uninvoiced_seconds / 3600,
         'invoiced_hours': invoiced_hours,
         'paid_hours': paid_hours,
+        'invoiced_amount': invoiced_amount,
+        'paid_amount': paid_amount,
     }
 
 
@@ -772,6 +805,19 @@ def get_time_summary(client_id: int) -> Dict[str, float]:
     """, (client_id,))
     paid_hours = cursor.fetchone()['total']
 
+    # Invoice amounts (includes flat rate invoices)
+    cursor.execute("""
+        SELECT COALESCE(SUM(total), 0) as total
+        FROM invoices WHERE client_id = ? AND status != 'paid'
+    """, (client_id,))
+    invoiced_amount = cursor.fetchone()['total']
+
+    cursor.execute("""
+        SELECT COALESCE(SUM(total), 0) as total
+        FROM invoices WHERE client_id = ? AND status = 'paid'
+    """, (client_id,))
+    paid_amount = cursor.fetchone()['total']
+
     conn.close()
 
     return {
@@ -780,6 +826,8 @@ def get_time_summary(client_id: int) -> Dict[str, float]:
         'uninvoiced_hours': uninvoiced_seconds / 3600,
         'invoiced_hours': invoiced_hours,
         'paid_hours': paid_hours,
+        'invoiced_amount': invoiced_amount,
+        'paid_amount': paid_amount,
     }
 
 

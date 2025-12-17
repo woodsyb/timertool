@@ -48,22 +48,21 @@ class TimeSummaryPanel(ttk.Frame):
         self.uninvoiced_amount = ttk.Label(row3, text="", width=12, anchor='e', foreground='green', font=('Segoe UI', 9, 'bold'))
         self.uninvoiced_amount.pack(side='left')
 
-        # Invoiced (not yet paid)
+        # Separator
+        ttk.Separator(summary_frame, orient='horizontal').pack(fill='x', pady=5)
+
+        # Unpaid invoices
         row4 = ttk.Frame(summary_frame)
         row4.pack(fill='x', pady=2)
-        ttk.Label(row4, text="Invoiced:", width=15, anchor='w').pack(side='left')
-        self.invoiced_hours = ttk.Label(row4, text="--", width=12, anchor='e')
-        self.invoiced_hours.pack(side='left')
-        self.invoiced_amount = ttk.Label(row4, text="", width=12, anchor='e', foreground='gray')
-        self.invoiced_amount.pack(side='left')
+        ttk.Label(row4, text="Unpaid:", width=15, anchor='w').pack(side='left')
+        self.unpaid_amount = ttk.Label(row4, text="--", width=12, anchor='e', foreground='#cc6600', font=('Segoe UI', 9, 'bold'))
+        self.unpaid_amount.pack(side='left')
 
-        # Paid
+        # Paid invoices
         row5 = ttk.Frame(summary_frame)
         row5.pack(fill='x', pady=2)
         ttk.Label(row5, text="Paid:", width=15, anchor='w').pack(side='left')
-        self.paid_hours = ttk.Label(row5, text="--", width=12, anchor='e')
-        self.paid_hours.pack(side='left')
-        self.paid_amount = ttk.Label(row5, text="", width=12, anchor='e', foreground='gray')
+        self.paid_amount = ttk.Label(row5, text="--", width=12, anchor='e', foreground='gray')
         self.paid_amount.pack(side='left')
 
         # Build invoice button
@@ -98,11 +97,9 @@ class TimeSummaryPanel(ttk.Frame):
             self.uninvoiced_hours.config(text=timer_engine.format_hours(summary['uninvoiced_hours']))
             self.uninvoiced_amount.config(text="(all clients)")
 
-            self.invoiced_hours.config(text=timer_engine.format_hours(summary['invoiced_hours']))
-            self.invoiced_amount.config(text="(all clients)")
-
-            self.paid_hours.config(text=timer_engine.format_hours(summary['paid_hours']))
-            self.paid_amount.config(text="(all clients)")
+            # Show actual invoice amounts
+            self.unpaid_amount.config(text=timer_engine.format_currency(summary['invoiced_amount']))
+            self.paid_amount.config(text=timer_engine.format_currency(summary['paid_amount']))
 
             self.invoice_btn.config(state='disabled')
             return
@@ -122,13 +119,11 @@ class TimeSummaryPanel(ttk.Frame):
         self.uninvoiced_hours.config(text=timer_engine.format_hours(summary['uninvoiced_hours']))
         self.uninvoiced_amount.config(text=f"({timer_engine.format_currency(summary['uninvoiced_hours'] * rate)})")
 
-        # Invoiced
-        self.invoiced_hours.config(text=timer_engine.format_hours(summary['invoiced_hours']))
-        self.invoiced_amount.config(text=f"({timer_engine.format_currency(summary['invoiced_hours'] * rate)})")
+        # Unpaid invoices (actual invoice amounts)
+        self.unpaid_amount.config(text=timer_engine.format_currency(summary['invoiced_amount']))
 
-        # Paid
-        self.paid_hours.config(text=timer_engine.format_hours(summary['paid_hours']))
-        self.paid_amount.config(text=f"({timer_engine.format_currency(summary['paid_hours'] * rate)})")
+        # Paid invoices (actual invoice amounts)
+        self.paid_amount.config(text=timer_engine.format_currency(summary['paid_amount']))
 
         # Enable invoice button if there's uninvoiced time
         if summary['uninvoiced_hours'] > 0:
