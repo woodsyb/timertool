@@ -643,24 +643,26 @@ class TimeEntriesDialog(tk.Toplevel):
                        command=self._load_entries).pack(side='left', padx=5)
 
         # Treeview for entries (with tree structure for date grouping)
-        columns = ('hours', 'type', 'keys', 'clicks', 'moves', 'status')
+        columns = ('hours', 'type', 'memo', 'keys', 'clicks', 'moves', 'status')
         self.tree = ttk.Treeview(frame, columns=columns, show='tree headings', selectmode='browse')
 
         self.tree.heading('#0', text='Date/Time')
         self.tree.heading('hours', text='Hours')
         self.tree.heading('type', text='Type')
+        self.tree.heading('memo', text='Memo')
         self.tree.heading('keys', text='Keys')
         self.tree.heading('clicks', text='Clicks')
         self.tree.heading('moves', text='Moves')
         self.tree.heading('status', text='Status')
 
         self.tree.column('#0', width=140)
-        self.tree.column('hours', width=70, anchor='e')
-        self.tree.column('type', width=80, anchor='center')
-        self.tree.column('keys', width=70, anchor='e')
-        self.tree.column('clicks', width=70, anchor='e')
-        self.tree.column('moves', width=70, anchor='e')
-        self.tree.column('status', width=100, anchor='center')
+        self.tree.column('hours', width=60, anchor='e')
+        self.tree.column('type', width=70, anchor='center')
+        self.tree.column('memo', width=150, anchor='w')
+        self.tree.column('keys', width=60, anchor='e')
+        self.tree.column('clicks', width=60, anchor='e')
+        self.tree.column('moves', width=60, anchor='e')
+        self.tree.column('status', width=80, anchor='center')
 
         scrollbar = ttk.Scrollbar(frame, orient='vertical', command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
@@ -768,10 +770,15 @@ class TimeEntriesDialog(tk.Toplevel):
                 total_clicks += clicks
                 total_moves += moves
 
+                memo = entry.get('description', '') or ''
+                if len(memo) > 25:
+                    memo = memo[:22] + '...'
+
                 self.tree.insert(date_id, 'end', iid=str(entry['id']),
                                text=dt.strftime('%H:%M'),
                                values=(f"{hours:.2f}",
                                       entry_type,
+                                      memo,
                                       f"{keys:,}" if keys else "-",
                                       f"{clicks:,}" if clicks else "-",
                                       f"{moves:,}" if moves else "-",
