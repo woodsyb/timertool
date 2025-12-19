@@ -117,6 +117,9 @@ class TimerApp:
         # Handle window close
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
+        # Handle taskbar clicks - bring dialogs to front
+        self.root.bind('<FocusIn>', self._on_focus)
+
         # Style
         self._setup_style()
 
@@ -197,9 +200,23 @@ class TimerApp:
         self.root.after(0, self._restore_window)
 
     def _restore_window(self):
-        """Restore the window."""
+        """Restore the window and any modal dialogs."""
         self.root.deiconify()
         self.root.lift()
+        self._lift_dialogs()
+
+    def _on_focus(self, event=None):
+        """Handle focus event - lift any modal dialogs."""
+        # Small delay to let Windows finish its focus handling
+        self.root.after(10, self._lift_dialogs)
+
+    def _lift_dialogs(self):
+        """Lift any child dialogs to front."""
+        for child in self.root.winfo_children():
+            if isinstance(child, tk.Toplevel):
+                child.lift()
+                child.focus_force()
+                return  # Focus the dialog, not main window
         self.root.focus_force()
 
     def _quit_from_tray(self, icon=None, item=None):
