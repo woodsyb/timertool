@@ -326,6 +326,7 @@ class ClientListPanel(ttk.Frame):
             self.context_menu.add_command(label="  Invoices", command=self._show_invoices)
             self.context_menu.add_command(label="  Build Invoice", command=self._show_build_invoice)
             self.context_menu.add_command(label="  Open Invoices Folder", command=self._open_client_invoices)
+            self.context_menu.add_command(label="  Generate Statement", command=self._generate_statement)
             self.context_menu.add_separator()
             self.context_menu.add_command(label="  Hide", command=self._archive_selected)
             self.context_menu.add_command(label="  Delete", command=self._delete_selected)
@@ -391,6 +392,32 @@ class ClientListPanel(ttk.Frame):
             subprocess.run(['open', str(client_folder)])
         else:
             subprocess.run(['xdg-open', str(client_folder)])
+
+    def _generate_statement(self):
+        """Generate a statement PDF for the selected client."""
+        if not self.selected_id:
+            return
+
+        client = next((c for c in self.clients if c['id'] == self.selected_id), None)
+        if not client:
+            return
+
+        try:
+            import generate_pdf
+            output_path = generate_pdf.generate_statement_pdf(self.selected_id)
+
+            # Open the generated PDF
+            if sys.platform == 'win32':
+                os.startfile(str(output_path))
+            elif sys.platform == 'darwin':
+                subprocess.run(['open', str(output_path)])
+            else:
+                subprocess.run(['xdg-open', str(output_path)])
+
+        except ValueError as e:
+            messagebox.showinfo("Info", str(e), parent=self)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate statement: {e}", parent=self)
 
     def _show_time_entries(self):
         """Show time entries dialog for selected client."""

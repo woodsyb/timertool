@@ -1066,6 +1066,41 @@ def clear_active_timer():
     conn.close()
 
 
+# === Outstanding Invoices (for statements) ===
+
+def get_outstanding_invoices(client_id: int) -> List[Dict[str, Any]]:
+    """Get all unpaid or partially paid invoices for a client."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT
+            invoice_number,
+            date_issued,
+            due_date,
+            description,
+            total,
+            COALESCE(amount_paid, 0) as amount_paid,
+            status
+        FROM invoices
+        WHERE client_id = ? AND status != 'paid'
+        ORDER BY date_issued
+    """, (client_id,))
+    invoices = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+
+    # Calculate outstanding balance for each
+    for inv in invoices:
+        inv['outstanding'] = inv['total'] - inv['amount_paid']
+
+    return invoices
+
+
+def get_outstanding_balance(client_id: int) -> float:
+    """Get total outstanding balance for a client across all unpaid invoices."""
+    invoices = get_outstanding_invoices(client_id)
+    return sum(inv['outstanding'] for inv in invoices)
+
+
 # === Tax Year Summary ===
 
 def get_tax_year_summary(year: int) -> Dict[str, Any]:
@@ -1076,24 +1111,25 @@ def get_tax_year_summary(year: int) -> Dict[str, Any]:
     year_start = f"{year}-01-01"
     year_end = f"{year}-12-31"
 
-    # Get all paid invoices for the year, grouped by client
+    # Get all invoices with payments for the year, grouped by client
+    # Use amount_paid (what was actually received) - includes partial payments
     cursor.execute("""
         SELECT
             c.id as client_id,
             COALESCE(c.contact_name, c.company_name) as client_name,
             c.company_name,
-            SUM(i.total) as total_paid,
+            SUM(i.amount_paid) as total_paid,
             COUNT(i.id) as invoice_count
         FROM invoices i
         JOIN clients c ON i.client_id = c.id
-        WHERE i.status = 'paid'
+        WHERE i.amount_paid > 0
           AND i.date_paid >= ? AND i.date_paid <= ?
         GROUP BY c.id
         ORDER BY total_paid DESC
     """, (year_start, year_end))
     by_client = [dict(row) for row in cursor.fetchall()]
 
-    # Get individual invoice details
+    # Get individual invoice details (any with payments)
     cursor.execute("""
         SELECT
             i.invoice_number,
@@ -1101,11 +1137,13 @@ def get_tax_year_summary(year: int) -> Dict[str, Any]:
             COALESCE(c.contact_name, c.company_name) as client_name,
             i.date_issued,
             i.date_paid,
-            i.total,
+            i.amount_paid as total,
+            i.total as invoice_total,
+            i.status,
             i.description
         FROM invoices i
         JOIN clients c ON i.client_id = c.id
-        WHERE i.status = 'paid'
+        WHERE i.amount_paid > 0
           AND i.date_paid >= ? AND i.date_paid <= ?
         ORDER BY i.date_paid
     """, (year_start, year_end))
@@ -1127,9 +1165,9 @@ def get_tax_year_summary(year: int) -> Dict[str, Any]:
             q_start, q_end = f"{year}-10-01", f"{year}-12-31"
 
         cursor.execute("""
-            SELECT COALESCE(SUM(total), 0) as total
+            SELECT COALESCE(SUM(amount_paid), 0) as total
             FROM invoices
-            WHERE status = 'paid'
+            WHERE amount_paid > 0
               AND date_paid >= ? AND date_paid <= ?
         """, (q_start, q_end))
         quarters[f"q{q}"] = cursor.fetchone()['total']

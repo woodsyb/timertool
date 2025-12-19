@@ -273,3 +273,261 @@ def generate_invoice_pdf(invoice_number: str) -> Path:
 
     doc.build(elements)
     return output_path
+
+
+def generate_statement_pdf(client_id: int) -> Path:
+    """Generate PDF statement showing all outstanding invoices for a client."""
+    if not REPORTLAB_AVAILABLE:
+        raise ImportError("reportlab is required for PDF generation. Install with: pip install reportlab")
+
+    # Get client info with address
+    import db as db_module
+    conn = db_module.get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT company_name, contact_name, bill_to, address, address2, city, state, zip, email
+        FROM clients WHERE id = ?
+    """, (client_id,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        raise ValueError(f"Client {client_id} not found")
+
+    client = dict(row)
+    client_name = client['contact_name'] or client['company_name']
+
+    # Get outstanding invoices
+    invoices = db.get_outstanding_invoices(client_id)
+    if not invoices:
+        raise ValueError(f"No outstanding invoices for {client_name}")
+
+    business = db.get_business_info()
+    if not business:
+        raise ValueError("Business info not configured. Go to Edit > Business Setup.")
+
+    banking = db.get_banking()
+
+    # Output path
+    client_folder = db.get_pdfs_dir() / (client['company_name'] or client_name).replace(' ', '_')
+    client_folder.mkdir(exist_ok=True)
+    statement_date = datetime.now().strftime('%Y-%m-%d')
+    output_path = client_folder / f"Statement_{statement_date}.pdf"
+
+    doc = SimpleDocTemplate(
+        str(output_path),
+        pagesize=letter,
+        rightMargin=0.75*inch,
+        leftMargin=0.75*inch,
+        topMargin=0.5*inch,
+        bottomMargin=0.5*inch
+    )
+
+    styles = getSampleStyleSheet()
+
+    # Custom styles (same as invoice)
+    styles.add(ParagraphStyle(
+        'CompanyName',
+        parent=styles['Heading1'],
+        fontSize=24,
+        spaceAfter=6,
+        textColor=colors.HexColor('#1a1a1a')
+    ))
+
+    styles.add(ParagraphStyle(
+        'CompanyInfo',
+        parent=styles['Normal'],
+        fontSize=9,
+        textColor=colors.HexColor('#666666'),
+        leading=12
+    ))
+
+    styles.add(ParagraphStyle(
+        'StatementTitle',
+        parent=styles['Heading1'],
+        fontSize=28,
+        alignment=TA_RIGHT,
+        textColor=colors.HexColor('#333333')
+    ))
+
+    styles.add(ParagraphStyle(
+        'SectionHeader',
+        parent=styles['Heading2'],
+        fontSize=11,
+        spaceBefore=12,
+        spaceAfter=6,
+        textColor=colors.HexColor('#333333')
+    ))
+
+    styles.add(ParagraphStyle(
+        'ClientInfo',
+        parent=styles['Normal'],
+        fontSize=10,
+        leading=14
+    ))
+
+    styles.add(ParagraphStyle(
+        'TotalDue',
+        parent=styles['Normal'],
+        fontSize=14,
+        alignment=TA_RIGHT,
+        textColor=colors.HexColor('#1a1a1a'),
+        fontName='Helvetica-Bold'
+    ))
+
+    styles.add(ParagraphStyle(
+        'Footer',
+        parent=styles['Normal'],
+        fontSize=9,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor('#666666')
+    ))
+
+    styles.add(ParagraphStyle(
+        'PaymentInfo',
+        parent=styles['Normal'],
+        fontSize=10,
+        leading=14
+    ))
+
+    elements = []
+
+    # Header section
+    header_data = [
+        [
+            Paragraph(business['company_name'], styles['CompanyName']),
+            Paragraph('STATEMENT', styles['StatementTitle'])
+        ],
+        [
+            Paragraph(
+                f"{business['address']}<br/>"
+                f"{business['city']}, {business['state']} {business['zip']}<br/>"
+                f"{business['phone']}<br/>"
+                f"{business['email']}",
+                styles['CompanyInfo']
+            ),
+            ''
+        ]
+    ]
+
+    header_table = Table(header_data, colWidths=[4*inch, 3*inch])
+    header_table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
+    ]))
+    elements.append(header_table)
+    elements.append(Spacer(1, 0.3*inch))
+
+    # Statement details and client info
+    statement_details = [
+        ['Statement Date:', datetime.now().strftime('%B %d, %Y')],
+        ['Account:', client_name],
+    ]
+
+    details_table = Table(statement_details, colWidths=[1.2*inch, 1.8*inch])
+    details_table.setStyle(TableStyle([
+        ('FONTSIZE', (0, 0), (-1, -1), 10),
+        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+        ('TEXTCOLOR', (0, 0), (0, -1), colors.HexColor('#666666')),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+    ]))
+
+    # Build client address
+    client_lines = ["<b>Statement For:</b>"]
+    if client.get('bill_to'):
+        client_lines.append(f"Attn: {client['bill_to']}")
+    client_lines.append(client['company_name'] or client_name)
+    if client.get('address'):
+        client_lines.append(client['address'])
+    if client.get('address2'):
+        client_lines.append(client['address2'])
+    if client.get('city') or client.get('state') or client.get('zip'):
+        city_state_zip = ', '.join(filter(None, [
+            client.get('city'),
+            ' '.join(filter(None, [client.get('state'), client.get('zip')]))
+        ]))
+        if city_state_zip:
+            client_lines.append(city_state_zip)
+
+    client_info = Paragraph('<br/>'.join(client_lines), styles['ClientInfo'])
+
+    details_row = Table([[details_table, client_info]], colWidths=[3.5*inch, 3.5*inch])
+    details_row.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+    ]))
+    elements.append(details_row)
+    elements.append(Spacer(1, 0.4*inch))
+
+    # Outstanding invoices table
+    elements.append(Paragraph('Outstanding Invoices', styles['SectionHeader']))
+
+    today = datetime.now().date()
+    line_items = [['Invoice #', 'Date', 'Due Date', 'Status', 'Total', 'Paid', 'Balance Due']]
+    total_outstanding = 0
+
+    for inv in invoices:
+        due_date = datetime.fromisoformat(inv['due_date']).date()
+        days_overdue = (today - due_date).days
+
+        if days_overdue > 0:
+            status = f"{days_overdue} days overdue"
+        elif days_overdue == 0:
+            status = "Due today"
+        else:
+            status = f"Due in {-days_overdue} days"
+
+        line_items.append([
+            inv['invoice_number'],
+            db.format_date_display(inv['date_issued']),
+            db.format_date_display(inv['due_date']),
+            status,
+            db.format_currency(inv['total']),
+            db.format_currency(inv['amount_paid']),
+            db.format_currency(inv['outstanding'])
+        ])
+        total_outstanding += inv['outstanding']
+
+    col_widths = [0.9*inch, 0.8*inch, 0.8*inch, 1.2*inch, 0.85*inch, 0.7*inch, 0.85*inch]
+    items_table = Table(line_items, colWidths=col_widths)
+    items_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f5f5f5')),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('LINEBELOW', (0, 0), (-1, 0), 1, colors.HexColor('#dddddd')),
+        ('LINEBELOW', (0, -1), (-1, -1), 1, colors.HexColor('#dddddd')),
+        ('ALIGN', (4, 0), (-1, -1), 'RIGHT'),
+    ]))
+    elements.append(items_table)
+    elements.append(Spacer(1, 0.2*inch))
+
+    # Total due
+    elements.append(Paragraph(
+        f"<b>TOTAL OUTSTANDING: {db.format_currency(total_outstanding)}</b>",
+        styles['TotalDue']
+    ))
+    elements.append(Spacer(1, 0.3*inch))
+
+    # Payment instructions (if banking info available)
+    if banking:
+        elements.append(Paragraph('Payment Instructions', styles['SectionHeader']))
+        payment_text = (
+            f"<b>ACH Transfer</b><br/>"
+            f"Bank: {banking['bank_name']}<br/>"
+            f"Routing Number: {banking['routing_number']}<br/>"
+            f"Account Number: {banking['account_number']}"
+        )
+        elements.append(Paragraph(payment_text, styles['PaymentInfo']))
+        elements.append(Spacer(1, 0.25*inch))
+
+    # Footer
+    elements.append(Paragraph(
+        f"Please remit payment at your earliest convenience.<br/>"
+        f"Questions? Contact {business['email']}",
+        styles['Footer']
+    ))
+
+    doc.build(elements)
+    return output_path

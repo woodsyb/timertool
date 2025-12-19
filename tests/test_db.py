@@ -402,6 +402,161 @@ class TestActiveTimer:
         assert active is None
 
 
+class TestTaxYearSummary:
+    """Test tax year summary for income reporting."""
+
+    def test_tax_summary_uses_amount_paid_not_total(self, temp_db):
+        """Tax summary should report actual money received, not invoice total."""
+        client_id = db.save_client("Test Client", "Test Co", 100.0)
+
+        # Create invoice for $4000, only $2500 paid
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO invoices (invoice_number, client_id, date_issued, due_date,
+                                  description, billing_type, rate, total,
+                                  payment_terms, payment_method, status, amount_paid, date_paid)
+            VALUES ('INV-0001', ?, '2025-01-01', '2025-01-31', 'Test', 'hourly', 100, 4000,
+                    'Net 30', 'ACH', 'paid', 2500, '2025-01-15')
+        """, (client_id,))
+        conn.commit()
+        conn.close()
+
+        summary = db.get_tax_year_summary(2025)
+        # Should be $2500 (amount_paid), not $4000 (total)
+        assert summary['total_income'] == 2500
+
+    def test_tax_summary_includes_partial_payments(self, temp_db):
+        """Tax summary should include partial payments as income."""
+        client_id = db.save_client("Test Client", "Test Co", 100.0)
+
+        # Create invoice for $4000, $2500 paid, status = partial
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO invoices (invoice_number, client_id, date_issued, due_date,
+                                  description, billing_type, rate, total,
+                                  payment_terms, payment_method, status, amount_paid, date_paid)
+            VALUES ('INV-0001', ?, '2025-01-01', '2025-01-31', 'Test', 'hourly', 100, 4000,
+                    'Net 30', 'ACH', 'partial', 2500, '2025-01-15')
+        """, (client_id,))
+        conn.commit()
+        conn.close()
+
+        summary = db.get_tax_year_summary(2025)
+        # Should include the $2500 partial payment
+        assert summary['total_income'] == 2500
+
+    def test_tax_summary_combines_partial_and_paid(self, temp_db):
+        """Tax summary should combine partial and fully paid invoices."""
+        client_id = db.save_client("Test Client", "Test Co", 100.0)
+
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        # Fully paid invoice: $1000
+        cursor.execute("""
+            INSERT INTO invoices (invoice_number, client_id, date_issued, due_date,
+                                  description, billing_type, rate, total,
+                                  payment_terms, payment_method, status, amount_paid, date_paid)
+            VALUES ('INV-0001', ?, '2025-01-01', '2025-01-31', 'Test', 'hourly', 100, 1000,
+                    'Net 30', 'ACH', 'paid', 1000, '2025-01-15')
+        """, (client_id,))
+        # Partial invoice: $500 of $800
+        cursor.execute("""
+            INSERT INTO invoices (invoice_number, client_id, date_issued, due_date,
+                                  description, billing_type, rate, total,
+                                  payment_terms, payment_method, status, amount_paid, date_paid)
+            VALUES ('INV-0002', ?, '2025-02-01', '2025-02-28', 'Test', 'hourly', 100, 800,
+                    'Net 30', 'ACH', 'partial', 500, '2025-02-15')
+        """, (client_id,))
+        conn.commit()
+        conn.close()
+
+        summary = db.get_tax_year_summary(2025)
+        # Should be $1000 + $500 = $1500
+        assert summary['total_income'] == 1500
+
+
+class TestOutstandingBalance:
+    """Test outstanding balance tracking for invoices."""
+
+    def test_get_outstanding_balance(self, temp_db):
+        """Should return total unpaid amount across all invoices for a client."""
+        client_id = db.save_client("Test Client", "Test Co", 100.0)
+
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        # Partial invoice: $1500 outstanding ($4000 - $2500)
+        cursor.execute("""
+            INSERT INTO invoices (invoice_number, client_id, date_issued, due_date,
+                                  description, billing_type, rate, total,
+                                  payment_terms, payment_method, status, amount_paid)
+            VALUES ('INV-0001', ?, '2025-01-01', '2025-01-31', 'Test', 'hourly', 100, 4000,
+                    'Net 30', 'ACH', 'partial', 2500)
+        """, (client_id,))
+        # Unpaid invoice: $1000 outstanding
+        cursor.execute("""
+            INSERT INTO invoices (invoice_number, client_id, date_issued, due_date,
+                                  description, billing_type, rate, total,
+                                  payment_terms, payment_method, status, amount_paid)
+            VALUES ('INV-0002', ?, '2025-02-01', '2025-02-28', 'Test', 'hourly', 100, 1000,
+                    'Net 30', 'ACH', 'unpaid', 0)
+        """, (client_id,))
+        conn.commit()
+        conn.close()
+
+        outstanding = db.get_outstanding_balance(client_id)
+        # Should be $1500 + $1000 = $2500
+        assert outstanding == 2500
+
+    def test_get_outstanding_balance_no_outstanding(self, temp_db):
+        """Should return 0 when all invoices are fully paid."""
+        client_id = db.save_client("Test Client", "Test Co", 100.0)
+
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO invoices (invoice_number, client_id, date_issued, due_date,
+                                  description, billing_type, rate, total,
+                                  payment_terms, payment_method, status, amount_paid)
+            VALUES ('INV-0001', ?, '2025-01-01', '2025-01-31', 'Test', 'hourly', 100, 1000,
+                    'Net 30', 'ACH', 'paid', 1000)
+        """, (client_id,))
+        conn.commit()
+        conn.close()
+
+        outstanding = db.get_outstanding_balance(client_id)
+        assert outstanding == 0
+
+    def test_get_outstanding_invoices(self, temp_db):
+        """Should return list of invoices with outstanding balances."""
+        client_id = db.save_client("Test Client", "Test Co", 100.0)
+
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO invoices (invoice_number, client_id, date_issued, due_date,
+                                  description, billing_type, rate, total,
+                                  payment_terms, payment_method, status, amount_paid)
+            VALUES ('INV-0001', ?, '2025-01-01', '2025-01-31', 'Test', 'hourly', 100, 4000,
+                    'Net 30', 'ACH', 'partial', 2500)
+        """, (client_id,))
+        cursor.execute("""
+            INSERT INTO invoices (invoice_number, client_id, date_issued, due_date,
+                                  description, billing_type, rate, total,
+                                  payment_terms, payment_method, status, amount_paid)
+            VALUES ('INV-0002', ?, '2025-02-01', '2025-02-28', 'Test', 'hourly', 100, 1000,
+                    'Net 30', 'ACH', 'paid', 1000)
+        """, (client_id,))
+        conn.commit()
+        conn.close()
+
+        invoices = db.get_outstanding_invoices(client_id)
+        assert len(invoices) == 1
+        assert invoices[0]['invoice_number'] == 'INV-0001'
+        assert invoices[0]['outstanding'] == 1500
+
+
 class TestSettings:
     """Test settings operations."""
 
