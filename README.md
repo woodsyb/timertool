@@ -11,6 +11,9 @@ A Windows time tracking application with client management, invoicing, and activ
 - **Inactivity Detection** - Auto-pause after configurable idle time
 - **Invoice Generation** - Create PDF invoices with hourly breakdown
 - **Payment Tracking** - Mark invoices as paid/partially paid
+- **Client Statements** - Generate PDF statements for outstanding balances
+- **Tax Year Summary** - Quarterly income breakdown with CSV/TXF export
+- **Database Backup** - Auto-backup on startup, optional S3 sync
 - **System Tray** - Minimize to tray, single instance enforcement
 - **Time Summaries** - Today, this week, uninvoiced, unpaid, paid totals
 
@@ -66,8 +69,10 @@ move dist\TimerTool.exe .
 - **File > Exit** - Quit application
 - **Edit > Business Setup** - Configure your business info for invoices
 - **Edit > Settings** - Inactivity timeout, auto-save interval
-- **View > Time Entries** - See all time entries with activity stats
+- **View > Time Entries** - See all time entries with activity stats (CSV export)
 - **View > Invoices** - Manage invoices, mark paid
+- **View > Tax Year Summary** - Income by quarter, export to CSV or TXF (TurboTax)
+- **Right-click Client > Generate Statement** - PDF of outstanding invoices
 
 ## Data Storage
 
@@ -84,6 +89,8 @@ All data stored in the `data/` folder:
 ### Global Settings (Edit > Settings)
 - Inactivity timeout (minutes)
 - Auto-save interval (seconds)
+- Backup location (local path)
+- S3 backup (bucket, region, access key, secret key)
 
 ## Testing
 
