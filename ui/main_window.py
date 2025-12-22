@@ -8,7 +8,7 @@ import timer_engine
 from ui.client_list import ClientListPanel
 from ui.timer_display import TimerDisplayPanel
 from ui.time_summary import TimeSummaryPanel
-from ui.dialogs import ManualEntryDialog, BuildInvoiceDialog, IdleDialog, RecoveryDialog, SettingsDialog, BusinessSetupDialog, InvoiceListDialog, TimeEntriesDialog, TaxYearSummaryDialog
+from ui.dialogs import ManualEntryDialog, BuildInvoiceDialog, RecoveryDialog, SettingsDialog, BusinessSetupDialog, InvoiceListDialog, TimeEntriesDialog, TaxYearSummaryDialog
 import os
 import subprocess
 import sys
@@ -191,25 +191,31 @@ class MainWindow(ttk.Frame):
         self._refresh_summary()
 
     def _on_idle_detected(self, idle_seconds: int):
-        """Handle idle detection - show dialog."""
-        dialog = IdleDialog(
-            self.winfo_toplevel(),
-            idle_seconds,
-            self.engine.get_elapsed_seconds()
-        )
-        self.wait_window(dialog)
+        """Handle idle detection - just stop the timer."""
+        # Stop the timer immediately - don't give option to resume
+        # (resuming can mess up which day the time gets recorded to)
+        elapsed = self.engine.get_elapsed_seconds()
+        self.engine.stop()
+        self.timer_panel.update_state_from_engine()
+        self._refresh_summary()
 
-        if dialog.result == 'resume':
-            self.engine.resume()
-            self.timer_panel.update_state_from_engine()
-        elif dialog.result == 'discard':
-            self.engine.discard_idle_time(idle_seconds)
-            self.engine.resume()
-            self.timer_panel.update_state_from_engine()
-        elif dialog.result == 'stop':
-            self.engine.stop()
-            self.timer_panel.update_state_from_engine()
-            self._refresh_summary()
+        # Bring window to front and notify user
+        root = self.winfo_toplevel()
+        root.deiconify()
+        root.lift()
+        root.attributes('-topmost', True)
+        root.focus_force()
+
+        idle_min = idle_seconds // 60
+        time_str = timer_engine.format_seconds(elapsed)
+        messagebox.showinfo(
+            "Timer Stopped",
+            f"Timer stopped due to {idle_min} minutes of inactivity.\n\nTime recorded: {time_str}",
+            parent=root
+        )
+
+        # Remove topmost after dialog dismissed
+        root.attributes('-topmost', False)
 
     def _check_recovery(self):
         """Check for crashed timer to recover."""

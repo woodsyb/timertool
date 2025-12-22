@@ -119,6 +119,8 @@ class TimerApp:
 
         # Handle taskbar clicks - bring dialogs to front
         self.root.bind('<FocusIn>', self._on_focus)
+        self.root.bind('<Map>', self._on_map)
+        self.root.bind('<Activate>', self._on_focus)
 
         # Style
         self._setup_style()
@@ -210,13 +212,29 @@ class TimerApp:
         # Small delay to let Windows finish its focus handling
         self.root.after(10, self._lift_dialogs)
 
+    def _on_map(self, event=None):
+        """Handle window being restored/mapped - lift any modal dialogs."""
+        self.root.after(50, self._lift_dialogs)
+
     def _lift_dialogs(self):
         """Lift any child dialogs to front."""
-        for child in self.root.winfo_children():
-            if isinstance(child, tk.Toplevel):
-                child.lift()
-                child.focus_force()
+        # Check all toplevel windows in the application
+        for widget in self.root.winfo_children():
+            if isinstance(widget, tk.Toplevel) and widget.winfo_exists():
+                widget.lift()
+                widget.focus_force()
                 return  # Focus the dialog, not main window
+        # Also check via winfo_id for any missed toplevels
+        try:
+            for name in self.root.tk.call('winfo', 'children', '.'):
+                widget = self.root.nametowidget(name)
+                if isinstance(widget, tk.Toplevel) and widget.winfo_exists():
+                    widget.lift()
+                    widget.focus_force()
+                    return
+        except tk.TclError:
+            pass
+        self.root.lift()
         self.root.focus_force()
 
     def _quit_from_tray(self, icon=None, item=None):
