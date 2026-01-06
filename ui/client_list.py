@@ -564,8 +564,8 @@ class ClientListPanel(ttk.Frame):
         self.wait_window(dialog)
 
         if dialog.result:
-            contact, company, rate, track = dialog.result
-            db.save_client(contact, company, rate, track)
+            contact, company, rate, track, screenshots = dialog.result
+            db.save_client(contact, company, rate, track, screenshots)
             self.refresh()
 
     def _edit_client(self, client: Dict):
@@ -574,8 +574,8 @@ class ClientListPanel(ttk.Frame):
         self.wait_window(dialog)
 
         if dialog.result:
-            contact, company, rate, track = dialog.result
-            db.update_client(client['id'], contact, company, rate, track)
+            contact, company, rate, track, screenshots = dialog.result
+            db.update_client(client['id'], contact, company, rate, track, screenshots)
             self.refresh()
             # Re-trigger selection callback with updated data
             updated = db.get_client(client['id'])
@@ -646,9 +646,14 @@ class ClientDialog(tk.Toplevel):
         self.track_check = ttk.Checkbutton(frame, text="Track keyboard/mouse activity", variable=self.track_var)
         self.track_check.grid(row=4, column=0, columnspan=2, sticky='w', pady=(12, 0))
 
+        # Capture screenshots checkbox
+        self.screenshot_var = tk.BooleanVar(value=self.client.get('capture_screenshots', 0) if self.client else False)
+        self.screenshot_check = ttk.Checkbutton(frame, text="Capture screenshots (proof of work)", variable=self.screenshot_var)
+        self.screenshot_check.grid(row=5, column=0, columnspan=2, sticky='w', pady=(4, 0))
+
         # Buttons
         btn_frame = tk.Frame(frame, bg=self.BG)
-        btn_frame.grid(row=5, column=0, columnspan=2, pady=(15, 0))
+        btn_frame.grid(row=6, column=0, columnspan=2, pady=(15, 0))
 
         ttk.Button(btn_frame, text="Save", command=self._save).pack(side='left', padx=5)
         ttk.Button(btn_frame, text="Cancel", command=self.destroy).pack(side='left', padx=5)
@@ -675,7 +680,7 @@ class ClientDialog(tk.Toplevel):
             messagebox.showerror("Error", "Please enter a valid hourly rate.", parent=self)
             return
 
-        self.result = (contact, company, rate, self.track_var.get())
+        self.result = (contact, company, rate, self.track_var.get(), self.screenshot_var.get())
         self.destroy()
 
 

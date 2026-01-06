@@ -2,8 +2,10 @@
 
 import tkinter as tk
 from tkinter import ttk
-from typing import Optional, Dict
+from typing import Optional, Dict, Callable
+from pathlib import Path
 import timer_engine
+import db
 
 
 class TimerDisplayPanel(ttk.Frame):
@@ -21,6 +23,9 @@ class TimerDisplayPanel(ttk.Frame):
         self.engine = engine
         self.client: Optional[Dict] = None
         self._update_job = None
+
+        # Wire up screenshot callback
+        self.engine.on_screenshot = self._on_screenshot
 
         self._create_widgets()
         self._update_display()
@@ -117,7 +122,12 @@ class TimerDisplayPanel(ttk.Frame):
         if self.engine.state == 'stopped':
             if self.client:
                 track_activity = self.client.get('track_activity', 1)
-                self.engine.start(self.client['id'], track_activity=bool(track_activity))
+                capture_screenshots = self.client.get('capture_screenshots', 0)
+                self.engine.start(
+                    self.client['id'],
+                    track_activity=bool(track_activity),
+                    capture_screenshots=bool(capture_screenshots)
+                )
                 self.start_btn.config(text="STOP")
                 self._start_update_loop()
         else:
@@ -226,3 +236,88 @@ class TimerDisplayPanel(ttk.Frame):
             self.start_btn.config(text="STOP")
             self._stop_update_loop()
         self._update_display()
+
+    def _on_screenshot(self, capture_result: dict):
+        """Handle screenshot captured event from engine."""
+        screenshot_id = capture_result['screenshot_id']
+        thumbnail = capture_result['thumbnail']
+
+        def on_delete(sid):
+            # Delete the screenshot from disk and DB
+            file_path = db.delete_screenshot(sid)
+            if file_path:
+                try:
+                    Path(file_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+            # Tell engine to reschedule in same window
+            self.engine.screenshot_capture.reschedule_in_window()
+
+        # Show popup
+        ScreenshotPopup(self.winfo_toplevel(), screenshot_id, thumbnail, on_delete)
+
+
+class ScreenshotPopup(tk.Toplevel):
+    """Bottom-right popup showing screenshot thumbnail with delete option."""
+
+    BG = '#2a2a2a'
+    FG = '#ffffff'
+
+    def __init__(self, parent, screenshot_id: int, thumbnail, on_delete: Callable):
+        super().__init__(parent)
+
+        self.screenshot_id = screenshot_id
+        self.on_delete = on_delete
+
+        # Window setup - no titlebar, always on top
+        self.overrideredirect(True)
+        self.attributes('-topmost', True)
+        self.configure(bg=self.BG)
+
+        # Position bottom-right of screen
+        self.update_idletasks()
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        popup_w, popup_h = 240, 200
+        x = screen_w - popup_w - 20
+        y = screen_h - popup_h - 60  # Above taskbar
+        self.geometry(f'{popup_w}x{popup_h}+{x}+{y}')
+
+        # Content frame with border
+        frame = tk.Frame(self, bg=self.BG, highlightbackground='#444444',
+                        highlightthickness=1)
+        frame.pack(fill='both', expand=True, padx=1, pady=1)
+
+        # Header
+        tk.Label(frame, text="Screenshot captured", bg=self.BG, fg=self.FG,
+                 font=('Segoe UI', 10, 'bold')).pack(pady=(10, 6))
+
+        # Thumbnail - convert PIL Image to PhotoImage
+        try:
+            from PIL import ImageTk
+            self.photo = ImageTk.PhotoImage(thumbnail)
+            tk.Label(frame, image=self.photo, bg=self.BG).pack(pady=4)
+        except Exception:
+            tk.Label(frame, text="[Preview unavailable]", bg=self.BG, fg='#666666',
+                    font=('Segoe UI', 9)).pack(pady=4)
+
+        # Delete button
+        ttk.Button(frame, text="Delete", command=self._on_delete).pack(pady=(6, 10))
+
+        # Auto-close after 5 seconds
+        self.after(5000, self._close)
+
+        # Allow clicking anywhere on popup to dismiss
+        self.bind('<Button-1>', lambda e: self._close() if e.widget == self else None)
+
+    def _on_delete(self):
+        """Handle delete button click."""
+        self.on_delete(self.screenshot_id)
+        self.destroy()
+
+    def _close(self):
+        """Close the popup."""
+        try:
+            self.destroy()
+        except tk.TclError:
+            pass  # Already destroyed

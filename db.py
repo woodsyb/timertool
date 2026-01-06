@@ -228,6 +228,8 @@ def init_db():
         cursor.execute("ALTER TABLE clients ADD COLUMN archived INTEGER DEFAULT 0")
     if 'track_activity' not in columns:
         cursor.execute("ALTER TABLE clients ADD COLUMN track_activity INTEGER DEFAULT 1")
+    if 'capture_screenshots' not in columns:
+        cursor.execute("ALTER TABLE clients ADD COLUMN capture_screenshots INTEGER DEFAULT 0")
     if 'bill_to' not in columns:
         cursor.execute("ALTER TABLE clients ADD COLUMN bill_to TEXT")
     if 'address2' not in columns:
@@ -304,6 +306,19 @@ def init_db():
             start_time TEXT,
             last_save_time TEXT,
             accumulated_seconds INTEGER DEFAULT 0
+        )
+    """)
+
+    # Screenshots (proof of work)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS screenshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            client_id INTEGER NOT NULL,
+            time_entry_id INTEGER,
+            captured_at TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            FOREIGN KEY (client_id) REFERENCES clients(id),
+            FOREIGN KEY (time_entry_id) REFERENCES time_entries(id)
         )
     """)
 
@@ -418,7 +433,8 @@ def get_clients(include_archived: bool = False) -> List[Dict]:
         SELECT id, company_name, contact_name, email,
                COALESCE(hourly_rate, 0) as hourly_rate, payment_preference,
                COALESCE(favorite, 0) as favorite, COALESCE(archived, 0) as archived,
-               COALESCE(track_activity, 1) as track_activity
+               COALESCE(track_activity, 1) as track_activity,
+               COALESCE(capture_screenshots, 0) as capture_screenshots
         FROM clients
     """
     if not include_archived:
@@ -454,7 +470,8 @@ def get_client(client_id: int) -> Optional[Dict]:
         SELECT id, company_name, contact_name, email,
                COALESCE(hourly_rate, 0) as hourly_rate, payment_preference,
                COALESCE(favorite, 0) as favorite, COALESCE(archived, 0) as archived,
-               COALESCE(track_activity, 1) as track_activity
+               COALESCE(track_activity, 1) as track_activity,
+               COALESCE(capture_screenshots, 0) as capture_screenshots
         FROM clients WHERE id = ?
     """, (client_id,))
     row = cursor.fetchone()
@@ -512,27 +529,33 @@ def delete_client(client_id: int):
     conn.close()
 
 
-def save_client(contact_name: str, company_name: str, hourly_rate: float, track_activity: bool = True) -> int:
+def save_client(contact_name: str, company_name: str, hourly_rate: float,
+                track_activity: bool = True, capture_screenshots: bool = False) -> int:
     """Save new client, return ID."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
-        INSERT INTO clients (company_name, contact_name, address, city, state, zip, email, hourly_rate, track_activity)
-        VALUES (?, ?, '', '', '', '', '', ?, ?)
-    """, (company_name, contact_name, hourly_rate, 1 if track_activity else 0))
+        INSERT INTO clients (company_name, contact_name, address, city, state, zip, email,
+                            hourly_rate, track_activity, capture_screenshots)
+        VALUES (?, ?, '', '', '', '', '', ?, ?, ?)
+    """, (company_name, contact_name, hourly_rate,
+          1 if track_activity else 0, 1 if capture_screenshots else 0))
     client_id = cursor.lastrowid
     conn.commit()
     conn.close()
     return client_id
 
 
-def update_client(client_id: int, contact_name: str, company_name: str, hourly_rate: float, track_activity: bool = True):
+def update_client(client_id: int, contact_name: str, company_name: str, hourly_rate: float,
+                  track_activity: bool = True, capture_screenshots: bool = False):
     """Update existing client."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE clients SET contact_name = ?, company_name = ?, hourly_rate = ?, track_activity = ? WHERE id = ?",
-        (contact_name, company_name, hourly_rate, 1 if track_activity else 0, client_id)
+        """UPDATE clients SET contact_name = ?, company_name = ?, hourly_rate = ?,
+           track_activity = ?, capture_screenshots = ? WHERE id = ?""",
+        (contact_name, company_name, hourly_rate,
+         1 if track_activity else 0, 1 if capture_screenshots else 0, client_id)
     )
     conn.commit()
     conn.close()
@@ -669,6 +692,9 @@ def mark_invoice_paid(invoice_number: str, date_paid: Optional[str] = None):
         """, (date_paid, row['total'], invoice_number))
         conn.commit()
     conn.close()
+
+    # Clean up screenshots for this invoice's time entries
+    cleanup_paid_invoice_screenshots(invoice_number)
 
 
 def get_invoice_pdf_path(invoice_number: str) -> Optional[Path]:
@@ -1062,6 +1088,86 @@ def clear_active_timer():
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM active_timer WHERE id = 1")
+    conn.commit()
+    conn.close()
+
+
+# === Screenshots ===
+
+def get_screenshots_dir() -> Path:
+    """Get the screenshots directory (creates if needed)."""
+    screenshots_dir = get_data_dir() / "screenshots"
+    screenshots_dir.mkdir(exist_ok=True)
+    return screenshots_dir
+
+
+def save_screenshot(client_id: int, file_path: str) -> int:
+    """Save a screenshot record, return ID."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO screenshots (client_id, captured_at, file_path)
+        VALUES (?, ?, ?)
+    """, (client_id, datetime.now().isoformat(), file_path))
+    screenshot_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return screenshot_id
+
+
+def link_screenshots_to_entry(screenshot_ids: List[int], entry_id: int):
+    """Link screenshots to a time entry."""
+    if not screenshot_ids:
+        return
+    conn = get_connection()
+    cursor = conn.cursor()
+    placeholders = ','.join('?' * len(screenshot_ids))
+    cursor.execute(f"""
+        UPDATE screenshots SET time_entry_id = ?
+        WHERE id IN ({placeholders})
+    """, [entry_id] + screenshot_ids)
+    conn.commit()
+    conn.close()
+
+
+def delete_screenshot(screenshot_id: int) -> Optional[str]:
+    """Delete a screenshot record and return the file path for deletion."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT file_path FROM screenshots WHERE id = ?", (screenshot_id,))
+    row = cursor.fetchone()
+    if row:
+        file_path = row['file_path']
+        cursor.execute("DELETE FROM screenshots WHERE id = ?", (screenshot_id,))
+        conn.commit()
+        conn.close()
+        return file_path
+    conn.close()
+    return None
+
+
+def cleanup_paid_invoice_screenshots(invoice_number: str):
+    """Delete screenshot files and records for entries in this invoice."""
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # Find all screenshots linked to time entries with this invoice_number
+    cursor.execute("""
+        SELECT s.id, s.file_path
+        FROM screenshots s
+        JOIN time_entries te ON s.time_entry_id = te.id
+        WHERE te.invoice_number = ?
+    """, (invoice_number,))
+
+    for row in cursor.fetchall():
+        # Delete file
+        try:
+            Path(row['file_path']).unlink(missing_ok=True)
+        except Exception:
+            pass
+        # Delete record
+        cursor.execute("DELETE FROM screenshots WHERE id = ?", (row['id'],))
+
     conn.commit()
     conn.close()
 
