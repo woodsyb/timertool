@@ -1142,32 +1142,42 @@ class SettingsDialog(tk.Toplevel):
         ttk.Label(frame, text="(Leave blank for default)",
                  font=('Segoe UI', 8), foreground='gray').grid(row=4, column=0, columnspan=3, sticky='w')
 
+        # Screenshot storage section
+        ttk.Label(frame, text="Screenshot Storage:").grid(row=5, column=0, sticky='w', pady=5)
+        self.screenshot_dir_var = tk.StringVar(value=db.get_setting('screenshot_local_dir', ''))
+        screenshot_entry = ttk.Entry(frame, textvariable=self.screenshot_dir_var, width=30)
+        screenshot_entry.grid(row=5, column=1, sticky='w', pady=5)
+        ttk.Button(frame, text="Browse...", command=self._browse_screenshot, width=8).grid(row=5, column=2, sticky='w', padx=5, pady=5)
+
+        ttk.Label(frame, text="(Leave blank for default: data/screenshots/)",
+                 font=('Segoe UI', 8), foreground='gray').grid(row=6, column=0, columnspan=3, sticky='w')
+
         # S3 Backup section
-        ttk.Separator(frame, orient='horizontal').grid(row=5, column=0, columnspan=3, sticky='ew', pady=10)
-        ttk.Label(frame, text="S3 Backup (optional)", font=('Segoe UI', 9, 'bold')).grid(row=6, column=0, columnspan=3, sticky='w')
+        ttk.Separator(frame, orient='horizontal').grid(row=7, column=0, columnspan=3, sticky='ew', pady=10)
+        ttk.Label(frame, text="S3 Backup (optional)", font=('Segoe UI', 9, 'bold')).grid(row=8, column=0, columnspan=3, sticky='w')
 
-        ttk.Label(frame, text="Bucket:").grid(row=7, column=0, sticky='w', pady=2)
+        ttk.Label(frame, text="Bucket:").grid(row=9, column=0, sticky='w', pady=2)
         self.s3_bucket_var = tk.StringVar(value=db.get_setting('s3_bucket', ''))
-        ttk.Entry(frame, textvariable=self.s3_bucket_var, width=30).grid(row=7, column=1, columnspan=2, sticky='w', pady=2)
+        ttk.Entry(frame, textvariable=self.s3_bucket_var, width=30).grid(row=9, column=1, columnspan=2, sticky='w', pady=2)
 
-        ttk.Label(frame, text="Region:").grid(row=8, column=0, sticky='w', pady=2)
+        ttk.Label(frame, text="Region:").grid(row=10, column=0, sticky='w', pady=2)
         self.s3_region_var = tk.StringVar(value=db.get_setting('s3_region', 'us-east-1'))
-        ttk.Entry(frame, textvariable=self.s3_region_var, width=15).grid(row=8, column=1, columnspan=2, sticky='w', pady=2)
+        ttk.Entry(frame, textvariable=self.s3_region_var, width=15).grid(row=10, column=1, columnspan=2, sticky='w', pady=2)
 
-        ttk.Label(frame, text="Access Key:").grid(row=9, column=0, sticky='w', pady=2)
+        ttk.Label(frame, text="Access Key:").grid(row=11, column=0, sticky='w', pady=2)
         self.s3_access_var = tk.StringVar(value=db.get_setting('s3_access_key', ''))
-        ttk.Entry(frame, textvariable=self.s3_access_var, width=30).grid(row=9, column=1, columnspan=2, sticky='w', pady=2)
+        ttk.Entry(frame, textvariable=self.s3_access_var, width=30).grid(row=11, column=1, columnspan=2, sticky='w', pady=2)
 
-        ttk.Label(frame, text="Secret Key:").grid(row=10, column=0, sticky='w', pady=2)
+        ttk.Label(frame, text="Secret Key:").grid(row=12, column=0, sticky='w', pady=2)
         self.s3_secret_var = tk.StringVar(value=db.get_setting('s3_secret_key', ''))
-        ttk.Entry(frame, textvariable=self.s3_secret_var, width=30, show='*').grid(row=10, column=1, columnspan=2, sticky='w', pady=2)
+        ttk.Entry(frame, textvariable=self.s3_secret_var, width=30, show='*').grid(row=12, column=1, columnspan=2, sticky='w', pady=2)
 
         ttk.Label(frame, text="(Uploads to s3://bucket/timertool-backups/ on startup)",
-                 font=('Segoe UI', 8), foreground='gray').grid(row=11, column=0, columnspan=3, sticky='w')
+                 font=('Segoe UI', 8), foreground='gray').grid(row=13, column=0, columnspan=3, sticky='w')
 
         # Buttons
         btn_frame = ttk.Frame(frame)
-        btn_frame.grid(row=12, column=0, columnspan=3, pady=(15, 0))
+        btn_frame.grid(row=14, column=0, columnspan=3, pady=(15, 0))
 
         ttk.Button(btn_frame, text="Save", command=self._save).pack(side='left', padx=5)
         ttk.Button(btn_frame, text="Cancel", command=self.destroy).pack(side='left', padx=5)
@@ -1183,6 +1193,16 @@ class SettingsDialog(tk.Toplevel):
         )
         if folder:
             self.backup_var.set(folder)
+
+    def _browse_screenshot(self):
+        """Browse for screenshot folder."""
+        folder = filedialog.askdirectory(
+            parent=self,
+            title="Select Screenshot Folder",
+            initialdir=self.screenshot_dir_var.get() or str(db.get_data_dir())
+        )
+        if folder:
+            self.screenshot_dir_var.set(folder)
 
     def _save(self):
         """Save settings."""
@@ -1206,6 +1226,7 @@ class SettingsDialog(tk.Toplevel):
         db.set_setting('inactivity_timeout_minutes', str(timeout))
         db.set_setting('auto_save_interval_seconds', str(save_interval))
         db.set_setting('backup_location', backup_loc)
+        db.set_setting('screenshot_local_dir', self.screenshot_dir_var.get().strip())
 
         # S3 settings
         db.set_setting('s3_bucket', self.s3_bucket_var.get().strip())

@@ -230,6 +230,16 @@ def init_db():
         cursor.execute("ALTER TABLE clients ADD COLUMN track_activity INTEGER DEFAULT 1")
     if 'capture_screenshots' not in columns:
         cursor.execute("ALTER TABLE clients ADD COLUMN capture_screenshots INTEGER DEFAULT 0")
+    if 'push_screenshots_remote' not in columns:
+        cursor.execute("ALTER TABLE clients ADD COLUMN push_screenshots_remote INTEGER DEFAULT 0")
+    if 'screenshot_keep_local' not in columns:
+        cursor.execute("ALTER TABLE clients ADD COLUMN screenshot_keep_local INTEGER DEFAULT 1")
+    if 'screenshot_remote_method' not in columns:
+        cursor.execute("ALTER TABLE clients ADD COLUMN screenshot_remote_method TEXT")
+    if 'screenshot_unc_path' not in columns:
+        cursor.execute("ALTER TABLE clients ADD COLUMN screenshot_unc_path TEXT")
+    if 'screenshot_unc_username' not in columns:
+        cursor.execute("ALTER TABLE clients ADD COLUMN screenshot_unc_username TEXT")
     if 'bill_to' not in columns:
         cursor.execute("ALTER TABLE clients ADD COLUMN bill_to TEXT")
     if 'address2' not in columns:
@@ -434,7 +444,10 @@ def get_clients(include_archived: bool = False) -> List[Dict]:
                COALESCE(hourly_rate, 0) as hourly_rate, payment_preference,
                COALESCE(favorite, 0) as favorite, COALESCE(archived, 0) as archived,
                COALESCE(track_activity, 1) as track_activity,
-               COALESCE(capture_screenshots, 0) as capture_screenshots
+               COALESCE(capture_screenshots, 0) as capture_screenshots,
+               COALESCE(push_screenshots_remote, 0) as push_screenshots_remote,
+               COALESCE(screenshot_keep_local, 1) as screenshot_keep_local,
+               screenshot_remote_method, screenshot_unc_path, screenshot_unc_username
         FROM clients
     """
     if not include_archived:
@@ -471,7 +484,10 @@ def get_client(client_id: int) -> Optional[Dict]:
                COALESCE(hourly_rate, 0) as hourly_rate, payment_preference,
                COALESCE(favorite, 0) as favorite, COALESCE(archived, 0) as archived,
                COALESCE(track_activity, 1) as track_activity,
-               COALESCE(capture_screenshots, 0) as capture_screenshots
+               COALESCE(capture_screenshots, 0) as capture_screenshots,
+               COALESCE(push_screenshots_remote, 0) as push_screenshots_remote,
+               COALESCE(screenshot_keep_local, 1) as screenshot_keep_local,
+               screenshot_remote_method, screenshot_unc_path, screenshot_unc_username
         FROM clients WHERE id = ?
     """, (client_id,))
     row = cursor.fetchone()
@@ -530,16 +546,29 @@ def delete_client(client_id: int):
 
 
 def save_client(contact_name: str, company_name: str, hourly_rate: float,
-                track_activity: bool = True, capture_screenshots: bool = False) -> int:
-    """Save new client, return ID."""
+                track_activity: bool = True, capture_screenshots: bool = False,
+                screenshot_settings: Optional[Dict] = None) -> int:
+    """Save new client, return ID.
+
+    screenshot_settings dict can contain:
+        push_remote, keep_local, remote_method, unc_path, unc_username
+    """
+    ss = screenshot_settings or {}
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO clients (company_name, contact_name, address, city, state, zip, email,
-                            hourly_rate, track_activity, capture_screenshots)
-        VALUES (?, ?, '', '', '', '', '', ?, ?, ?)
+                            hourly_rate, track_activity, capture_screenshots,
+                            push_screenshots_remote, screenshot_keep_local,
+                            screenshot_remote_method, screenshot_unc_path, screenshot_unc_username)
+        VALUES (?, ?, '', '', '', '', '', ?, ?, ?, ?, ?, ?, ?, ?)
     """, (company_name, contact_name, hourly_rate,
-          1 if track_activity else 0, 1 if capture_screenshots else 0))
+          1 if track_activity else 0, 1 if capture_screenshots else 0,
+          1 if ss.get('push_remote') else 0,
+          1 if ss.get('keep_local', True) else 0,
+          ss.get('remote_method'),
+          ss.get('unc_path'),
+          ss.get('unc_username')))
     client_id = cursor.lastrowid
     conn.commit()
     conn.close()
@@ -547,15 +576,30 @@ def save_client(contact_name: str, company_name: str, hourly_rate: float,
 
 
 def update_client(client_id: int, contact_name: str, company_name: str, hourly_rate: float,
-                  track_activity: bool = True, capture_screenshots: bool = False):
-    """Update existing client."""
+                  track_activity: bool = True, capture_screenshots: bool = False,
+                  screenshot_settings: Optional[Dict] = None):
+    """Update existing client.
+
+    screenshot_settings dict can contain:
+        push_remote, keep_local, remote_method, unc_path, unc_username
+    """
+    ss = screenshot_settings or {}
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
         """UPDATE clients SET contact_name = ?, company_name = ?, hourly_rate = ?,
-           track_activity = ?, capture_screenshots = ? WHERE id = ?""",
+           track_activity = ?, capture_screenshots = ?,
+           push_screenshots_remote = ?, screenshot_keep_local = ?,
+           screenshot_remote_method = ?, screenshot_unc_path = ?, screenshot_unc_username = ?
+           WHERE id = ?""",
         (contact_name, company_name, hourly_rate,
-         1 if track_activity else 0, 1 if capture_screenshots else 0, client_id)
+         1 if track_activity else 0, 1 if capture_screenshots else 0,
+         1 if ss.get('push_remote') else 0,
+         1 if ss.get('keep_local', True) else 0,
+         ss.get('remote_method'),
+         ss.get('unc_path'),
+         ss.get('unc_username'),
+         client_id)
     )
     conn.commit()
     conn.close()
@@ -1096,8 +1140,12 @@ def clear_active_timer():
 
 def get_screenshots_dir() -> Path:
     """Get the screenshots directory (creates if needed)."""
-    screenshots_dir = get_data_dir() / "screenshots"
-    screenshots_dir.mkdir(exist_ok=True)
+    custom = get_setting('screenshot_local_dir', '')
+    if custom:
+        screenshots_dir = Path(custom)
+    else:
+        screenshots_dir = get_data_dir() / "screenshots"
+    screenshots_dir.mkdir(parents=True, exist_ok=True)
     return screenshots_dir
 
 

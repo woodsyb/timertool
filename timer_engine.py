@@ -207,6 +207,21 @@ class ScreenshotCapture:
             screenshot_id = db.save_screenshot(self.client_id, str(filepath))
             self.captured_ids.append(screenshot_id)
 
+            # Upload to remote if configured
+            client = db.get_client(self.client_id)
+            push_remote = client.get('push_screenshots_remote', 0) if client else 0
+            keep_local = client.get('screenshot_keep_local', 1) if client else 1
+
+            if push_remote:
+                from screenshot_upload import upload_screenshot
+                success = upload_screenshot(self.client_id, filepath)
+                # Delete local if push succeeded AND keep_local is off
+                if success and not keep_local:
+                    try:
+                        filepath.unlink()
+                    except Exception:
+                        pass
+
             # Schedule next window
             self._schedule_next_capture()
 

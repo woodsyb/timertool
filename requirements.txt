@@ -6,3 +6,4 @@ pynput>=1.7.6
 sv_ttk>=2.6.0
 pywinstyles>=1.8
 boto3>=1.35.0
+keyring>=24.0.0

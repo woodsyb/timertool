@@ -564,8 +564,15 @@ class ClientListPanel(ttk.Frame):
         self.wait_window(dialog)
 
         if dialog.result:
-            contact, company, rate, track, screenshots = dialog.result
-            db.save_client(contact, company, rate, track, screenshots)
+            contact, company, rate, track, screenshots, ss_settings = dialog.result
+            client_id = db.save_client(contact, company, rate, track, screenshots, ss_settings)
+            # Save password to keyring if provided
+            if hasattr(dialog, '_pending_password') and dialog._pending_password:
+                try:
+                    import keyring
+                    keyring.set_password("timertool", f"client_{client_id}_unc", dialog._pending_password)
+                except Exception:
+                    pass
             self.refresh()
 
     def _edit_client(self, client: Dict):
@@ -574,8 +581,15 @@ class ClientListPanel(ttk.Frame):
         self.wait_window(dialog)
 
         if dialog.result:
-            contact, company, rate, track, screenshots = dialog.result
-            db.update_client(client['id'], contact, company, rate, track, screenshots)
+            contact, company, rate, track, screenshots, ss_settings = dialog.result
+            db.update_client(client['id'], contact, company, rate, track, screenshots, ss_settings)
+            # Save password to keyring if provided
+            if hasattr(dialog, '_pending_password') and dialog._pending_password:
+                try:
+                    import keyring
+                    keyring.set_password("timertool", f"client_{client['id']}_unc", dialog._pending_password)
+                except Exception:
+                    pass
             self.refresh()
             # Re-trigger selection callback with updated data
             updated = db.get_client(client['id'])
@@ -648,12 +662,74 @@ class ClientDialog(tk.Toplevel):
 
         # Capture screenshots checkbox
         self.screenshot_var = tk.BooleanVar(value=self.client.get('capture_screenshots', 0) if self.client else False)
-        self.screenshot_check = ttk.Checkbutton(frame, text="Capture screenshots (proof of work)", variable=self.screenshot_var)
+        self.screenshot_check = ttk.Checkbutton(frame, text="Capture screenshots (proof of work)",
+                                                 variable=self.screenshot_var, command=self._toggle_screenshot_options)
         self.screenshot_check.grid(row=5, column=0, columnspan=2, sticky='w', pady=(4, 0))
+
+        # Screenshot options frame (shown when capture_screenshots is enabled)
+        self.screenshot_frame = tk.Frame(frame, bg=self.BG)
+        self.screenshot_frame.grid(row=6, column=0, columnspan=2, sticky='w', padx=(20, 0), pady=(4, 0))
+
+        # Push to remote checkbox
+        self.push_remote_var = tk.BooleanVar(value=self.client.get('push_screenshots_remote', 0) if self.client else False)
+        self.push_remote_check = ttk.Checkbutton(self.screenshot_frame, text="Push to remote",
+                                                  variable=self.push_remote_var, command=self._toggle_remote_options)
+        self.push_remote_check.grid(row=0, column=0, columnspan=2, sticky='w')
+
+        # Remote options frame (shown when push_remote is enabled)
+        self.remote_frame = tk.Frame(self.screenshot_frame, bg=self.BG)
+        self.remote_frame.grid(row=1, column=0, columnspan=2, sticky='w', padx=(20, 0), pady=(4, 0))
+
+        # Method dropdown
+        tk.Label(self.remote_frame, text="Method:", bg=self.BG, fg=self.FG,
+                font=('Segoe UI', 9)).grid(row=0, column=0, sticky='w', pady=2)
+        self.method_var = tk.StringVar(value=self.client.get('screenshot_remote_method', 'unc') if self.client else 'unc')
+        method_combo = ttk.Combobox(self.remote_frame, textvariable=self.method_var,
+                                    values=['unc'], state='readonly', width=15)
+        method_combo.grid(row=0, column=1, sticky='w', pady=2, padx=(8, 0))
+
+        # Keep local checkbox
+        self.keep_local_var = tk.BooleanVar(value=self.client.get('screenshot_keep_local', 1) if self.client else True)
+        ttk.Checkbutton(self.remote_frame, text="Keep local copy",
+                       variable=self.keep_local_var).grid(row=1, column=0, columnspan=2, sticky='w', pady=2)
+
+        # UNC path
+        tk.Label(self.remote_frame, text="Path:", bg=self.BG, fg=self.FG,
+                font=('Segoe UI', 9)).grid(row=2, column=0, sticky='w', pady=2)
+        self.unc_path_var = tk.StringVar(value=self.client.get('screenshot_unc_path', '') if self.client else '')
+        ttk.Entry(self.remote_frame, textvariable=self.unc_path_var, width=25).grid(row=2, column=1, sticky='w', pady=2, padx=(8, 0))
+
+        # Username
+        tk.Label(self.remote_frame, text="Username:", bg=self.BG, fg=self.FG,
+                font=('Segoe UI', 9)).grid(row=3, column=0, sticky='w', pady=2)
+        self.unc_user_var = tk.StringVar(value=self.client.get('screenshot_unc_username', '') if self.client else '')
+        ttk.Entry(self.remote_frame, textvariable=self.unc_user_var, width=25).grid(row=3, column=1, sticky='w', pady=2, padx=(8, 0))
+
+        # Password
+        tk.Label(self.remote_frame, text="Password:", bg=self.BG, fg=self.FG,
+                font=('Segoe UI', 9)).grid(row=4, column=0, sticky='w', pady=2)
+        pw_frame = tk.Frame(self.remote_frame, bg=self.BG)
+        pw_frame.grid(row=4, column=1, sticky='w', pady=2, padx=(8, 0))
+        self.unc_pass_var = tk.StringVar()
+        # Load existing password from keyring if editing
+        if self.client and self.client.get('id'):
+            try:
+                import keyring
+                existing_pw = keyring.get_password("timertool", f"client_{self.client['id']}_unc")
+                if existing_pw:
+                    self.unc_pass_var.set(existing_pw)
+            except Exception:
+                pass
+        ttk.Entry(pw_frame, textvariable=self.unc_pass_var, width=18, show='*').pack(side='left')
+        self._pw_saved_label = tk.Label(pw_frame, text="", bg=self.BG, fg='#00aa00', font=('Segoe UI', 8))
+        self._pw_saved_label.pack(side='left', padx=(5, 0))
+
+        # Initialize visibility
+        self._toggle_screenshot_options()
 
         # Buttons
         btn_frame = tk.Frame(frame, bg=self.BG)
-        btn_frame.grid(row=6, column=0, columnspan=2, pady=(15, 0))
+        btn_frame.grid(row=7, column=0, columnspan=2, pady=(15, 0))
 
         ttk.Button(btn_frame, text="Save", command=self._save).pack(side='left', padx=5)
         ttk.Button(btn_frame, text="Cancel", command=self.destroy).pack(side='left', padx=5)
@@ -661,6 +737,20 @@ class ClientDialog(tk.Toplevel):
         self.contact_entry.focus_set()
         self.bind('<Return>', lambda e: self._save())
         self.bind('<Escape>', lambda e: self.destroy())
+
+    def _toggle_screenshot_options(self):
+        """Show/hide screenshot options based on checkbox."""
+        if self.screenshot_var.get():
+            self.screenshot_frame.grid()
+        else:
+            self.screenshot_frame.grid_remove()
+
+    def _toggle_remote_options(self):
+        """Show/hide remote options based on checkbox."""
+        if self.push_remote_var.get():
+            self.remote_frame.grid()
+        else:
+            self.remote_frame.grid_remove()
 
     def _save(self):
         """Validate and save."""
@@ -680,7 +770,19 @@ class ClientDialog(tk.Toplevel):
             messagebox.showerror("Error", "Please enter a valid hourly rate.", parent=self)
             return
 
-        self.result = (contact, company, rate, self.track_var.get(), self.screenshot_var.get())
+        # Build screenshot settings dict
+        screenshot_settings = {
+            'push_remote': self.push_remote_var.get(),
+            'keep_local': self.keep_local_var.get(),
+            'remote_method': self.method_var.get() if self.push_remote_var.get() else None,
+            'unc_path': self.unc_path_var.get().strip() if self.push_remote_var.get() else None,
+            'unc_username': self.unc_user_var.get().strip() if self.push_remote_var.get() else None,
+        }
+
+        # Store password separately - will be saved to keyring after client is saved
+        self._pending_password = self.unc_pass_var.get() if self.push_remote_var.get() else None
+
+        self.result = (contact, company, rate, self.track_var.get(), self.screenshot_var.get(), screenshot_settings)
         self.destroy()
 
 
