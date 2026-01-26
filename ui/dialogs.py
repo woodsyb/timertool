@@ -149,6 +149,88 @@ class ManualEntryDialog(tk.Toplevel):
                 messagebox.showerror("Error", "Please enter valid start and end times.", parent=self)
                 return
 
+        # Check for overlapping entries (same client only)
+        overlaps = db.check_time_entry_overlaps(
+            self.client['id'], start_time, end_time
+        )
+
+        if overlaps:
+            max_overlap = max(o['overlap_minutes'] for o in overlaps)
+
+            if max_overlap <= 15:
+                # Auto-adjust: shift start time to end of latest overlapping entry
+                latest_end = max(datetime.fromisoformat(o['end_time']) for o in overlaps)
+                if latest_end < end_time:
+                    # Adjust start time and recalculate duration
+                    start_time = latest_end
+                    duration_seconds = int((end_time - start_time).total_seconds())
+                    hours = duration_seconds / 3600
+
+                    if duration_seconds <= 0:
+                        messagebox.showerror(
+                            "Overlap Error",
+                            "Cannot adjust entry - it would have zero or negative duration.\n"
+                            "The existing entry covers the entire time range.",
+                            parent=self
+                        )
+                        return
+
+                    messagebox.showinfo(
+                        "Auto-Adjusted",
+                        f"Start time adjusted to {latest_end.strftime('%I:%M %p')} to avoid overlap.",
+                        parent=self
+                    )
+                else:
+                    messagebox.showerror(
+                        "Overlap Error",
+                        "Cannot auto-adjust - existing entry ends after your entry.",
+                        parent=self
+                    )
+                    return
+            else:
+                # Large overlap - warn user
+                overlap_details = []
+                for o in overlaps:
+                    o_start = datetime.fromisoformat(o['start_time'])
+                    o_end = datetime.fromisoformat(o['end_time'])
+                    o_hours = o['duration_seconds'] / 3600
+                    desc = o.get('description') or '(no description)'
+                    if len(desc) > 30:
+                        desc = desc[:27] + '...'
+                    overlap_details.append(
+                        f"  {o_start.strftime('%I:%M %p')} - {o_end.strftime('%I:%M %p')} "
+                        f"({o_hours:.1f} hrs) - \"{desc}\""
+                    )
+
+                msg = (
+                    f"This entry overlaps by {int(max_overlap)} minutes with:\n\n"
+                    + "\n".join(overlap_details)
+                    + "\n\nSave anyway?"
+                )
+                if not messagebox.askyesno("Overlapping Entry", msg, parent=self):
+                    return
+
+        # Check daily hours total
+        existing_hours = db.get_daily_hours(self.client['id'], date)
+        new_total = existing_hours + hours
+
+        if new_total > 24:
+            messagebox.showerror(
+                "Invalid Entry",
+                f"This entry would bring today's total to {new_total:.1f} hours.\n"
+                "Cannot exceed 24 hours in a single day.",
+                parent=self
+            )
+            return
+
+        if new_total > 12:
+            if not messagebox.askyesno(
+                "High Daily Hours",
+                f"This would bring today's total to {new_total:.1f} hours.\n\nContinue?",
+                parent=self
+            ):
+                return
+
         self.result = {
             'date': date,
             'hours': hours,
@@ -163,7 +245,7 @@ class ManualEntryDialog(tk.Toplevel):
 class BuildInvoiceDialog(tk.Toplevel):
     """Dialog for building an invoice from time entries."""
 
-    def __init__(self, parent, client: Dict, entries: List[Dict]):
+    def __init__(self, parent, client: Dict, entries: List[Dict], week_start: str = None):
         super().__init__(parent)
         self.title("Build Invoice")
         self.configure(bg='#1c1c1c')
@@ -171,12 +253,14 @@ class BuildInvoiceDialog(tk.Toplevel):
         self.entries = entries
         self.result = None
         self.entry_vars = {}
+        self.week_start = week_start  # For retainer mode
+        self.is_retainer = client.get('retainer_enabled', 0)
 
         self.transient(parent)
         self.grab_set()
 
         self._create_widgets()
-        self.geometry('600x500+%d+%d' % (parent.winfo_rootx() + 30, parent.winfo_rooty() + 30))
+        self.geometry('600x700+%d+%d' % (parent.winfo_rootx() + 30, parent.winfo_rooty() + 30))
 
     def _create_widgets(self):
         frame = ttk.Frame(self, padding=15)
@@ -184,7 +268,14 @@ class BuildInvoiceDialog(tk.Toplevel):
 
         # Client info
         ttk.Label(frame, text=f"Invoice for: {self.client['name']}", font=('Segoe UI', 11, 'bold')).pack(anchor='w')
-        ttk.Label(frame, text=f"Rate: ${self.client['hourly_rate']:.2f}/hr").pack(anchor='w')
+
+        rate = self.client.get('retainer_rate') or self.client['hourly_rate']
+        ttk.Label(frame, text=f"Rate: ${rate:.2f}/hr").pack(anchor='w')
+
+        # Retainer breakdown section (only for retainer clients)
+        if self.is_retainer:
+            self._create_retainer_section(frame)
+
         ttk.Separator(frame, orient='horizontal').pack(fill='x', pady=10)
 
         # Date range filter
@@ -300,6 +391,129 @@ class BuildInvoiceDialog(tk.Toplevel):
             ttk.Label(row_frame, text=hours_str, width=10).pack(side='left')
             ttk.Label(row_frame, text=desc, foreground='gray').pack(side='left')
 
+    def _create_retainer_section(self, parent):
+        """Create the retainer breakdown section."""
+        # Calculate week bounds from entries or use provided week_start
+        if self.week_start:
+            ws = datetime.fromisoformat(self.week_start)
+        elif self.entries:
+            # Use the week of the first entry
+            first_date = min(datetime.fromisoformat(e['start_time']) for e in self.entries)
+            ws, _ = db.get_week_bounds(first_date)
+        else:
+            ws, _ = db.get_week_bounds(datetime.now())
+
+        self.current_week_start = ws.strftime('%Y-%m-%d')
+        week_end = ws + timedelta(days=6)
+
+        # Retainer info frame
+        retainer_frame = tk.Frame(parent, bg='#2d2d2d', relief='ridge', bd=1)
+        retainer_frame.pack(fill='x', pady=(10, 0))
+
+        inner = tk.Frame(retainer_frame, bg='#2d2d2d', padx=12, pady=10)
+        inner.pack(fill='x')
+
+        # Week header
+        week_str = f"{ws.strftime('%b %d')} - {week_end.strftime('%b %d, %Y')}"
+        tk.Label(inner, text=f"RETAINER WEEK: {week_str}", font=('Segoe UI', 10, 'bold'),
+                bg='#2d2d2d', fg='#00aaff').grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 8))
+
+        # Retainer details
+        retainer_hours = self.client.get('retainer_hours') or 0
+        rate = self.client.get('retainer_rate') or self.client.get('hourly_rate', 0)
+
+        self.worked_hours_label = tk.Label(inner, text="Hours Worked: 0.00 hrs",
+                                           font=('Segoe UI', 9), bg='#2d2d2d', fg='#ffffff')
+        self.worked_hours_label.grid(row=1, column=0, sticky='w', pady=2)
+
+        tk.Label(inner, text=f"Retainer Minimum: {retainer_hours:.2f} hrs",
+                font=('Segoe UI', 9), bg='#2d2d2d', fg='#aaaaaa').grid(row=2, column=0, sticky='w', pady=2)
+
+        self.billable_hours_label = tk.Label(inner, text="Billable Hours: 0.00 hrs",
+                                              font=('Segoe UI', 9, 'bold'), bg='#2d2d2d', fg='#00ff00')
+        self.billable_hours_label.grid(row=3, column=0, sticky='w', pady=2)
+
+        # Separator
+        tk.Frame(inner, bg='#444444', height=1).grid(row=4, column=0, columnspan=2, sticky='ew', pady=8)
+
+        tk.Label(inner, text=f"Rate: ${rate:.2f}/hr", font=('Segoe UI', 9),
+                bg='#2d2d2d', fg='#aaaaaa').grid(row=5, column=0, sticky='w', pady=2)
+
+        self.retainer_total_label = tk.Label(inner, text="TOTAL: $0.00",
+                                              font=('Segoe UI', 11, 'bold'), bg='#2d2d2d', fg='#00ff00')
+        self.retainer_total_label.grid(row=6, column=0, sticky='w', pady=(4, 0))
+
+        # Exempt button
+        exempt_frame = tk.Frame(inner, bg='#2d2d2d')
+        exempt_frame.grid(row=1, column=1, rowspan=3, sticky='ne', padx=(20, 0))
+
+        # Check if already exempted
+        self.is_exempted = db.is_week_exempted(self.client['id'], self.current_week_start)
+
+        self.exempt_var = tk.BooleanVar(value=self.is_exempted)
+        self.exempt_check = ttk.Checkbutton(exempt_frame, text="Exempt This Week",
+                                            variable=self.exempt_var, command=self._toggle_exemption)
+        self.exempt_check.pack(anchor='e')
+
+        if self.is_exempted:
+            exemption = db.get_retainer_exemption(self.client['id'], self.current_week_start)
+            reason = exemption.get('reason', '') if exemption else ''
+            tk.Label(exempt_frame, text=f"Reason: {reason[:30]}" if reason else "(no reason)",
+                    font=('Segoe UI', 8), bg='#2d2d2d', fg='#888888').pack(anchor='e')
+
+    def _toggle_exemption(self):
+        """Handle exemption toggle."""
+        if self.exempt_var.get():
+            # Show reason dialog
+            reason = self._ask_exemption_reason()
+            if reason is not None:
+                db.add_retainer_exemption(self.client['id'], self.current_week_start, reason)
+                self.is_exempted = True
+            else:
+                self.exempt_var.set(False)
+        else:
+            db.remove_retainer_exemption(self.client['id'], self.current_week_start)
+            self.is_exempted = False
+        self._update_totals()
+
+    def _ask_exemption_reason(self) -> Optional[str]:
+        """Show a simple dialog to ask for exemption reason."""
+        dialog = tk.Toplevel(self)
+        dialog.title("Exempt Week")
+        dialog.configure(bg='#1c1c1c')
+        dialog.transient(self)
+        dialog.grab_set()
+
+        frame = ttk.Frame(dialog, padding=15)
+        frame.pack(fill='both', expand=True)
+
+        ttk.Label(frame, text="Reason for exemption (optional):").pack(anchor='w')
+        reason_var = tk.StringVar()
+        entry = ttk.Entry(frame, textvariable=reason_var, width=40)
+        entry.pack(fill='x', pady=10)
+        entry.focus_set()
+
+        result = {'value': None}
+
+        def on_ok():
+            result['value'] = reason_var.get().strip()
+            dialog.destroy()
+
+        def on_cancel():
+            dialog.destroy()
+
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(fill='x')
+        ttk.Button(btn_frame, text="OK", command=on_ok).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=on_cancel).pack(side='left', padx=5)
+
+        entry.bind('<Return>', lambda e: on_ok())
+        dialog.bind('<Escape>', lambda e: on_cancel())
+
+        dialog.geometry('+%d+%d' % (self.winfo_rootx() + 50, self.winfo_rooty() + 50))
+        self.wait_window(dialog)
+        return result['value']
+
     def _filter_entries(self):
         """Filter entries by date range."""
         start = self.start_date.get_date()
@@ -321,11 +535,26 @@ class BuildInvoiceDialog(tk.Toplevel):
             if self.entry_vars.get(entry['id'], tk.BooleanVar(value=False)).get():
                 total_seconds += entry['duration_seconds'] or 0
 
-        total_hours = total_seconds / 3600
-        total_amount = total_hours * self.client['hourly_rate']
+        worked_hours = total_seconds / 3600
+        rate = self.client.get('retainer_rate') or self.client['hourly_rate']
 
-        self.total_hours_label.config(text=f"Total: {total_hours:.2f} hrs")
+        # Calculate billable hours (retainer vs actual)
+        if self.is_retainer and not getattr(self, 'is_exempted', False):
+            retainer_hours = self.client.get('retainer_hours') or 0
+            billable_hours = max(worked_hours, retainer_hours)
+        else:
+            billable_hours = worked_hours
+
+        total_amount = billable_hours * rate
+
+        self.total_hours_label.config(text=f"Total: {billable_hours:.2f} hrs")
         self.total_amount_label.config(text=timer_engine.format_currency(total_amount))
+
+        # Update retainer breakdown if present
+        if self.is_retainer and hasattr(self, 'worked_hours_label'):
+            self.worked_hours_label.config(text=f"Hours Worked: {worked_hours:.2f} hrs")
+            self.billable_hours_label.config(text=f"Billable Hours: {billable_hours:.2f} hrs")
+            self.retainer_total_label.config(text=f"TOTAL: {timer_engine.format_currency(total_amount)}")
 
     def _create(self):
         """Create the invoice."""
@@ -338,11 +567,40 @@ class BuildInvoiceDialog(tk.Toplevel):
             messagebox.showerror("Error", "Please select at least one entry.", parent=self)
             return
 
+        # Calculate retainer info
+        total_seconds = sum(e['duration_seconds'] or 0 for e in selected_entries)
+        worked_hours = total_seconds / 3600
+
+        retainer_info = None
+        if self.is_retainer:
+            retainer_hours = self.client.get('retainer_hours') or 0
+            is_exempted = getattr(self, 'is_exempted', False)
+            if is_exempted:
+                billable_hours = worked_hours
+                retainer_hours_applied = 0
+                overage_hours = worked_hours
+            else:
+                billable_hours = max(worked_hours, retainer_hours)
+                retainer_hours_applied = min(worked_hours, retainer_hours)
+                overage_hours = max(0, worked_hours - retainer_hours)
+
+            retainer_info = {
+                'is_retainer': True,
+                'week_start': getattr(self, 'current_week_start', None),
+                'worked_hours': worked_hours,
+                'retainer_hours': retainer_hours,
+                'billable_hours': billable_hours,
+                'retainer_hours_applied': retainer_hours_applied,
+                'overage_hours': overage_hours,
+                'is_exempted': is_exempted,
+            }
+
         self.result = {
             'entries': selected_entries,
             'description': self.desc_var.get(),
             'payment_terms': self.terms_var.get(),
-            'payment_method': self.method_var.get()
+            'payment_method': self.method_var.get(),
+            'retainer_info': retainer_info,
         }
         self.destroy()
 
@@ -537,6 +795,7 @@ class InvoiceListDialog(tk.Toplevel):
 
         ttk.Button(btn_frame, text="Open PDF", command=self._open_pdf).pack(side='left', padx=5)
         ttk.Button(btn_frame, text="Mark Paid", command=self._mark_paid).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Delete", command=self._delete_invoice).pack(side='left', padx=5)
         ttk.Button(btn_frame, text="Close", command=self.destroy).pack(side='right', padx=5)
 
     def _load_invoices(self):
@@ -608,6 +867,57 @@ class InvoiceListDialog(tk.Toplevel):
             amount = dialog.result['amount']
             db.record_payment(invoice_number, amount)
             self._load_invoices()
+
+    def _delete_invoice(self):
+        """Delete the selected invoice."""
+        selection = self.tree.selection()
+        if not selection:
+            return
+
+        invoice_number = selection[0]
+        invoice = db.get_invoice(invoice_number)
+
+        if not invoice:
+            messagebox.showerror("Error", f"Invoice {invoice_number} not found.", parent=self)
+            return
+
+        # Check if fully paid - block deletion
+        if invoice['status'] == 'paid':
+            messagebox.showerror(
+                "Cannot Delete",
+                f"{invoice_number} is fully paid.\n\n"
+                "Paid invoices are protected financial records and cannot be deleted.",
+                parent=self
+            )
+            return
+
+        # Show delete confirmation dialog
+        dialog = DeleteInvoiceDialog(self, invoice)
+        self.wait_window(dialog)
+
+        if dialog.result:
+            try:
+                result = db.delete_invoice(
+                    invoice_number,
+                    restore_hours=dialog.result['restore_hours'],
+                    delete_pdf=dialog.result['delete_pdf']
+                )
+
+                if result['success']:
+                    msg = result['message']
+                    if result.get('hours_restored'):
+                        msg += "\nHours restored to unbilled pool."
+                    if result.get('pdf_deleted'):
+                        msg += "\nPDF file deleted."
+                    messagebox.showinfo("Invoice Deleted", msg, parent=self)
+                    self._load_invoices()
+                else:
+                    messagebox.showerror("Error", result['message'], parent=self)
+
+            except ValueError as e:
+                messagebox.showerror("Cannot Delete", str(e), parent=self)
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to delete invoice: {e}", parent=self)
 
 
 class TimeEntriesDialog(tk.Toplevel):
@@ -1095,6 +1405,103 @@ class PaymentDialog(tk.Toplevel):
             return
 
         self.result = {'amount': amount}
+        self.destroy()
+
+
+class DeleteInvoiceDialog(tk.Toplevel):
+    """Dialog for confirming invoice deletion with options."""
+
+    def __init__(self, parent, invoice: Dict):
+        super().__init__(parent)
+        self.title("Delete Invoice")
+        self.configure(bg='#1c1c1c')
+        self.invoice = invoice
+        self.result = None
+
+        self.transient(parent)
+        self.grab_set()
+
+        self._create_widgets()
+        self.geometry('+%d+%d' % (parent.winfo_rootx() + 50, parent.winfo_rooty() + 50))
+
+    def _create_widgets(self):
+        frame = ttk.Frame(self, padding=15)
+        frame.pack(fill='both', expand=True)
+
+        total = self.invoice['total']
+        paid = self.invoice.get('amount_paid') or 0
+
+        # Invoice info header
+        ttk.Label(frame, text=f"Delete Invoice: {self.invoice['invoice_number']}",
+                 font=('Segoe UI', 11, 'bold')).grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 10))
+
+        # Invoice details
+        ttk.Label(frame, text=f"Client: {self.invoice.get('client_name', 'Unknown')}").grid(
+            row=1, column=0, columnspan=2, sticky='w', pady=2)
+        ttk.Label(frame, text=f"Date: {self.invoice['date_issued']}").grid(
+            row=2, column=0, columnspan=2, sticky='w', pady=2)
+        ttk.Label(frame, text=f"Total: ${total:.2f}").grid(
+            row=3, column=0, columnspan=2, sticky='w', pady=2)
+
+        # Warning for partial payments
+        if paid > 0:
+            ttk.Separator(frame, orient='horizontal').grid(row=4, column=0, columnspan=2, sticky='ew', pady=10)
+            warning_frame = ttk.Frame(frame)
+            warning_frame.grid(row=5, column=0, columnspan=2, sticky='w', pady=5)
+
+            ttk.Label(warning_frame, text="WARNING:", font=('Segoe UI', 9, 'bold'),
+                     foreground='#ff9800').pack(side='left')
+            ttk.Label(warning_frame, text=f" ${paid:.2f} in payments recorded",
+                     foreground='#ff9800').pack(side='left')
+
+            ttk.Label(frame, text="Hours will return to unbilled pool. You must\n"
+                                  "handle payment accounting externally.",
+                     font=('Segoe UI', 8), foreground='gray').grid(
+                row=6, column=0, columnspan=2, sticky='w', pady=(0, 5))
+
+        # Options
+        ttk.Separator(frame, orient='horizontal').grid(row=7, column=0, columnspan=2, sticky='ew', pady=10)
+        ttk.Label(frame, text="Options:", font=('Segoe UI', 9, 'bold')).grid(
+            row=8, column=0, columnspan=2, sticky='w', pady=(0, 5))
+
+        # Restore hours checkbox
+        self.restore_hours_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(frame, text="Restore hours to unbilled pool",
+                       variable=self.restore_hours_var).grid(row=9, column=0, columnspan=2, sticky='w', pady=2)
+
+        # Delete PDF checkbox
+        self.delete_pdf_var = tk.BooleanVar(value=True)
+        pdf_path = db.get_invoice_pdf_path(self.invoice['invoice_number'])
+        pdf_exists = pdf_path is not None
+        pdf_text = "Delete PDF file" if pdf_exists else "Delete PDF file (not found)"
+        cb = ttk.Checkbutton(frame, text=pdf_text, variable=self.delete_pdf_var)
+        cb.grid(row=10, column=0, columnspan=2, sticky='w', pady=2)
+        if not pdf_exists:
+            cb.configure(state='disabled')
+            self.delete_pdf_var.set(False)
+
+        # Confirmation text
+        ttk.Separator(frame, orient='horizontal').grid(row=11, column=0, columnspan=2, sticky='ew', pady=10)
+        ttk.Label(frame, text="This action cannot be undone.",
+                 font=('Segoe UI', 9), foreground='#f44336').grid(
+            row=12, column=0, columnspan=2, sticky='w', pady=(0, 10))
+
+        # Buttons
+        btn_frame = ttk.Frame(frame)
+        btn_frame.grid(row=13, column=0, columnspan=2, pady=(5, 0))
+
+        ttk.Button(btn_frame, text="Delete Invoice", command=self._delete,
+                  style='Accent.TButton').pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=self.destroy).pack(side='left', padx=5)
+
+        self.bind('<Escape>', lambda e: self.destroy())
+
+    def _delete(self):
+        """Confirm and execute deletion."""
+        self.result = {
+            'restore_hours': self.restore_hours_var.get(),
+            'delete_pdf': self.delete_pdf_var.get()
+        }
         self.destroy()
 
 

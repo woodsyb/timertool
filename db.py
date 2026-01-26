@@ -244,6 +244,13 @@ def init_db():
         cursor.execute("ALTER TABLE clients ADD COLUMN bill_to TEXT")
     if 'address2' not in columns:
         cursor.execute("ALTER TABLE clients ADD COLUMN address2 TEXT")
+    # Retainer billing columns
+    if 'retainer_enabled' not in columns:
+        cursor.execute("ALTER TABLE clients ADD COLUMN retainer_enabled INTEGER DEFAULT 0")
+    if 'retainer_hours' not in columns:
+        cursor.execute("ALTER TABLE clients ADD COLUMN retainer_hours REAL")
+    if 'retainer_rate' not in columns:
+        cursor.execute("ALTER TABLE clients ADD COLUMN retainer_rate REAL")
 
     # Invoices (from invoices system)
     cursor.execute("""
@@ -270,6 +277,13 @@ def init_db():
     inv_cols = [row[1] for row in cursor.fetchall()]
     if 'amount_paid' not in inv_cols:
         cursor.execute("ALTER TABLE invoices ADD COLUMN amount_paid REAL DEFAULT 0")
+    # Retainer billing columns
+    if 'retainer_hours_applied' not in inv_cols:
+        cursor.execute("ALTER TABLE invoices ADD COLUMN retainer_hours_applied REAL")
+    if 'overage_hours' not in inv_cols:
+        cursor.execute("ALTER TABLE invoices ADD COLUMN overage_hours REAL")
+    if 'is_retainer_invoice' not in inv_cols:
+        cursor.execute("ALTER TABLE invoices ADD COLUMN is_retainer_invoice INTEGER DEFAULT 0")
 
     # Invoice hours breakdown
     cursor.execute("""
@@ -329,6 +343,19 @@ def init_db():
             file_path TEXT NOT NULL,
             FOREIGN KEY (client_id) REFERENCES clients(id),
             FOREIGN KEY (time_entry_id) REFERENCES time_entries(id)
+        )
+    """)
+
+    # Retainer exemptions (weeks where retainer minimum is waived)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS retainer_exemptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            client_id INTEGER NOT NULL,
+            week_start TEXT NOT NULL,
+            reason TEXT,
+            created_at TEXT NOT NULL,
+            UNIQUE(client_id, week_start),
+            FOREIGN KEY (client_id) REFERENCES clients(id)
         )
     """)
 
@@ -447,7 +474,9 @@ def get_clients(include_archived: bool = False) -> List[Dict]:
                COALESCE(capture_screenshots, 0) as capture_screenshots,
                COALESCE(push_screenshots_remote, 0) as push_screenshots_remote,
                COALESCE(screenshot_keep_local, 1) as screenshot_keep_local,
-               screenshot_remote_method, screenshot_unc_path, screenshot_unc_username
+               screenshot_remote_method, screenshot_unc_path, screenshot_unc_username,
+               COALESCE(retainer_enabled, 0) as retainer_enabled,
+               retainer_hours, retainer_rate
         FROM clients
     """
     if not include_archived:
@@ -487,7 +516,9 @@ def get_client(client_id: int) -> Optional[Dict]:
                COALESCE(capture_screenshots, 0) as capture_screenshots,
                COALESCE(push_screenshots_remote, 0) as push_screenshots_remote,
                COALESCE(screenshot_keep_local, 1) as screenshot_keep_local,
-               screenshot_remote_method, screenshot_unc_path, screenshot_unc_username
+               screenshot_remote_method, screenshot_unc_path, screenshot_unc_username,
+               COALESCE(retainer_enabled, 0) as retainer_enabled,
+               retainer_hours, retainer_rate
         FROM clients WHERE id = ?
     """, (client_id,))
     row = cursor.fetchone()
@@ -547,28 +578,37 @@ def delete_client(client_id: int):
 
 def save_client(contact_name: str, company_name: str, hourly_rate: float,
                 track_activity: bool = True, capture_screenshots: bool = False,
-                screenshot_settings: Optional[Dict] = None) -> int:
+                screenshot_settings: Optional[Dict] = None,
+                retainer_settings: Optional[Dict] = None) -> int:
     """Save new client, return ID.
 
     screenshot_settings dict can contain:
         push_remote, keep_local, remote_method, unc_path, unc_username
+
+    retainer_settings dict can contain:
+        enabled, hours, rate
     """
     ss = screenshot_settings or {}
+    rs = retainer_settings or {}
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO clients (company_name, contact_name, address, city, state, zip, email,
                             hourly_rate, track_activity, capture_screenshots,
                             push_screenshots_remote, screenshot_keep_local,
-                            screenshot_remote_method, screenshot_unc_path, screenshot_unc_username)
-        VALUES (?, ?, '', '', '', '', '', ?, ?, ?, ?, ?, ?, ?, ?)
+                            screenshot_remote_method, screenshot_unc_path, screenshot_unc_username,
+                            retainer_enabled, retainer_hours, retainer_rate)
+        VALUES (?, ?, '', '', '', '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (company_name, contact_name, hourly_rate,
           1 if track_activity else 0, 1 if capture_screenshots else 0,
           1 if ss.get('push_remote') else 0,
           1 if ss.get('keep_local', True) else 0,
           ss.get('remote_method'),
           ss.get('unc_path'),
-          ss.get('unc_username')))
+          ss.get('unc_username'),
+          1 if rs.get('enabled') else 0,
+          rs.get('hours'),
+          rs.get('rate')))
     client_id = cursor.lastrowid
     conn.commit()
     conn.close()
@@ -577,20 +617,26 @@ def save_client(contact_name: str, company_name: str, hourly_rate: float,
 
 def update_client(client_id: int, contact_name: str, company_name: str, hourly_rate: float,
                   track_activity: bool = True, capture_screenshots: bool = False,
-                  screenshot_settings: Optional[Dict] = None):
+                  screenshot_settings: Optional[Dict] = None,
+                  retainer_settings: Optional[Dict] = None):
     """Update existing client.
 
     screenshot_settings dict can contain:
         push_remote, keep_local, remote_method, unc_path, unc_username
+
+    retainer_settings dict can contain:
+        enabled, hours, rate
     """
     ss = screenshot_settings or {}
+    rs = retainer_settings or {}
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
         """UPDATE clients SET contact_name = ?, company_name = ?, hourly_rate = ?,
            track_activity = ?, capture_screenshots = ?,
            push_screenshots_remote = ?, screenshot_keep_local = ?,
-           screenshot_remote_method = ?, screenshot_unc_path = ?, screenshot_unc_username = ?
+           screenshot_remote_method = ?, screenshot_unc_path = ?, screenshot_unc_username = ?,
+           retainer_enabled = ?, retainer_hours = ?, retainer_rate = ?
            WHERE id = ?""",
         (contact_name, company_name, hourly_rate,
          1 if track_activity else 0, 1 if capture_screenshots else 0,
@@ -599,6 +645,9 @@ def update_client(client_id: int, contact_name: str, company_name: str, hourly_r
          ss.get('remote_method'),
          ss.get('unc_path'),
          ss.get('unc_username'),
+         1 if rs.get('enabled') else 0,
+         rs.get('hours'),
+         rs.get('rate'),
          client_id)
     )
     conn.commit()
@@ -751,6 +800,99 @@ def get_invoice_pdf_path(invoice_number: str) -> Optional[Path]:
     if pdf_path.exists():
         return pdf_path
     return None
+
+
+def delete_invoice(invoice_number: str, restore_hours: bool = True, delete_pdf: bool = True) -> Dict[str, Any]:
+    """Delete an invoice and optionally restore hours to unbilled pool.
+
+    Args:
+        invoice_number: The invoice number to delete
+        restore_hours: If True, mark time entries as uninvoiced again
+        delete_pdf: If True, delete the PDF file
+
+    Returns:
+        Dict with 'success', 'message', and optional 'warning' keys
+
+    Raises:
+        ValueError: If invoice is fully paid (financial record protection)
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        # Get invoice details
+        cursor.execute("""
+            SELECT i.*, c.company_name as client_name
+            FROM invoices i
+            JOIN clients c ON i.client_id = c.id
+            WHERE i.invoice_number = ?
+        """, (invoice_number,))
+        invoice = cursor.fetchone()
+
+        if not invoice:
+            conn.close()
+            return {'success': False, 'message': f"Invoice {invoice_number} not found."}
+
+        invoice = dict(invoice)
+        amount_paid = invoice.get('amount_paid') or 0
+        total = invoice['total']
+
+        # Block deletion of fully paid invoices
+        if invoice['status'] == 'paid' or amount_paid >= total:
+            conn.close()
+            raise ValueError(
+                f"Cannot delete fully paid invoice {invoice_number}. "
+                f"Paid invoices are protected financial records."
+            )
+
+        warning = None
+        if amount_paid > 0:
+            warning = f"This invoice has ${amount_paid:.2f} in partial payments recorded."
+
+        # Start transaction
+        # 1. Restore hours to unbilled pool if requested
+        if restore_hours:
+            cursor.execute("""
+                UPDATE time_entries
+                SET invoiced = 0, invoice_number = NULL
+                WHERE invoice_number = ?
+            """, (invoice_number,))
+
+        # 2. Delete invoice_hours records
+        cursor.execute("DELETE FROM invoice_hours WHERE invoice_number = ?", (invoice_number,))
+
+        # 3. Delete the invoice record
+        cursor.execute("DELETE FROM invoices WHERE invoice_number = ?", (invoice_number,))
+
+        conn.commit()
+
+        # 4. Delete PDF file if requested (outside transaction - file ops)
+        pdf_deleted = False
+        if delete_pdf:
+            pdf_path = get_invoices_dir() / invoice['client_name'].replace(' ', '_') / f"{invoice_number}.pdf"
+            if pdf_path.exists():
+                try:
+                    pdf_path.unlink()
+                    pdf_deleted = True
+                except Exception:
+                    pass  # Non-critical if PDF deletion fails
+
+        result = {
+            'success': True,
+            'message': f"Invoice {invoice_number} deleted.",
+            'hours_restored': restore_hours,
+            'pdf_deleted': pdf_deleted
+        }
+        if warning:
+            result['warning'] = warning
+
+        return result
+
+    except Exception as e:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 # === Time Entries ===
@@ -1335,6 +1477,240 @@ def get_tax_year_summary(year: int) -> Dict[str, Any]:
         'invoices': invoices,
         'quarters': quarters
     }
+
+
+# === Retainer Functions ===
+
+def get_week_bounds(date: datetime) -> tuple:
+    """Get Monday-Sunday bounds for a given date.
+
+    Returns (week_start, week_end) as datetime objects.
+    week_start is Monday 00:00:00, week_end is Sunday 23:59:59.
+    """
+    # Find Monday of the week containing this date
+    days_since_monday = date.weekday()
+    week_start = date.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days_since_monday)
+    week_end = week_start + timedelta(days=6, hours=23, minutes=59, seconds=59)
+    return (week_start, week_end)
+
+
+def get_week_start_str(date: datetime) -> str:
+    """Get the Monday date string (YYYY-MM-DD) for a given date's week."""
+    week_start, _ = get_week_bounds(date)
+    return week_start.strftime('%Y-%m-%d')
+
+
+def is_week_exempted(client_id: int, week_start: str) -> bool:
+    """Check if a week is exempted from retainer minimum."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT 1 FROM retainer_exemptions
+        WHERE client_id = ? AND week_start = ?
+    """, (client_id, week_start))
+    result = cursor.fetchone() is not None
+    conn.close()
+    return result
+
+
+def get_retainer_exemption(client_id: int, week_start: str) -> Optional[Dict]:
+    """Get exemption details for a week if it exists."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id, client_id, week_start, reason, created_at
+        FROM retainer_exemptions
+        WHERE client_id = ? AND week_start = ?
+    """, (client_id, week_start))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def add_retainer_exemption(client_id: int, week_start: str, reason: str = '') -> int:
+    """Add an exemption for a week. Returns exemption ID."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT OR REPLACE INTO retainer_exemptions (client_id, week_start, reason, created_at)
+        VALUES (?, ?, ?, ?)
+    """, (client_id, week_start, reason, datetime.now().isoformat()))
+    exemption_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return exemption_id
+
+
+def remove_retainer_exemption(client_id: int, week_start: str):
+    """Remove an exemption for a week."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        DELETE FROM retainer_exemptions
+        WHERE client_id = ? AND week_start = ?
+    """, (client_id, week_start))
+    conn.commit()
+    conn.close()
+
+
+def get_retainer_week_summary(client_id: int, week_start: str) -> Dict[str, Any]:
+    """Get retainer summary for a specific week.
+
+    Returns dict with:
+        week_start: str (Monday YYYY-MM-DD)
+        week_end: str (Sunday YYYY-MM-DD)
+        worked_hours: float
+        retainer_hours: float (from client settings)
+        billable_hours: float (max of worked, retainer unless exempted)
+        is_exempted: bool
+        exemption_reason: str or None
+        rate: float
+        total_amount: float
+    """
+    client = get_client(client_id)
+    if not client:
+        raise ValueError(f"Client {client_id} not found")
+
+    # Parse week_start and calculate week_end
+    ws = datetime.fromisoformat(week_start)
+    week_end = ws + timedelta(days=6)
+
+    # Get worked hours for this week
+    entries = get_time_entries(
+        client_id=client_id,
+        start_date=ws,
+        end_date=week_end + timedelta(days=1),  # end_date is exclusive
+        invoiced=False
+    )
+    worked_seconds = sum(e['duration_seconds'] or 0 for e in entries)
+    worked_hours = worked_seconds / 3600
+
+    # Get retainer settings
+    retainer_enabled = client.get('retainer_enabled', 0)
+    retainer_hours = client.get('retainer_hours') or 0
+    retainer_rate = client.get('retainer_rate') or client.get('hourly_rate', 0)
+
+    # Check exemption
+    is_exempted = is_week_exempted(client_id, week_start)
+    exemption = get_retainer_exemption(client_id, week_start) if is_exempted else None
+    exemption_reason = exemption.get('reason') if exemption else None
+
+    # Calculate billable hours
+    if retainer_enabled and not is_exempted:
+        billable_hours = max(worked_hours, retainer_hours)
+    else:
+        billable_hours = worked_hours
+
+    total_amount = billable_hours * retainer_rate
+
+    return {
+        'week_start': week_start,
+        'week_end': week_end.strftime('%Y-%m-%d'),
+        'worked_hours': worked_hours,
+        'retainer_hours': retainer_hours if retainer_enabled else 0,
+        'billable_hours': billable_hours,
+        'is_exempted': is_exempted,
+        'exemption_reason': exemption_reason,
+        'rate': retainer_rate,
+        'total_amount': total_amount,
+        'retainer_enabled': bool(retainer_enabled),
+        'entries': entries,
+    }
+
+
+# === Time Entry Validation ===
+
+def check_time_entry_overlaps(
+    client_id: int,
+    start_time: datetime,
+    end_time: datetime,
+    exclude_entry_id: Optional[int] = None
+) -> List[Dict]:
+    """Find overlapping entries for the same client.
+
+    Returns list of overlapping entries with their overlap amount in minutes.
+    Overlap condition: existing.start < new.end AND existing.end > new.start
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    query = """
+        SELECT id, start_time, end_time, duration_seconds, description
+        FROM time_entries
+        WHERE client_id = ?
+          AND end_time IS NOT NULL
+          AND start_time < ?
+          AND end_time > ?
+    """
+    params = [client_id, end_time.isoformat(), start_time.isoformat()]
+
+    if exclude_entry_id is not None:
+        query += " AND id != ?"
+        params.append(exclude_entry_id)
+
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+
+    overlaps = []
+    for row in rows:
+        entry = dict(row)
+        # Calculate overlap amount
+        existing_start = datetime.fromisoformat(entry['start_time'])
+        existing_end = datetime.fromisoformat(entry['end_time'])
+        overlap_start = max(start_time, existing_start)
+        overlap_end = min(end_time, existing_end)
+        overlap_minutes = (overlap_end - overlap_start).total_seconds() / 60
+        entry['overlap_minutes'] = overlap_minutes
+        overlaps.append(entry)
+
+    return overlaps
+
+
+def get_daily_hours(
+    client_id: int,
+    date: datetime,
+    exclude_entry_id: Optional[int] = None
+) -> float:
+    """Get total hours for a client on a specific date.
+
+    Args:
+        client_id: Client ID
+        date: Date to check (only the date portion is used)
+        exclude_entry_id: Entry ID to exclude (for edits)
+
+    Returns total hours as a float.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # Get start/end of day
+    if isinstance(date, datetime):
+        day_start = date.replace(hour=0, minute=0, second=0, microsecond=0)
+    else:
+        day_start = datetime.combine(date, datetime.min.time())
+    day_end = day_start + timedelta(days=1)
+
+    query = """
+        SELECT COALESCE(SUM(duration_seconds), 0) as total
+        FROM time_entries
+        WHERE client_id = ?
+          AND start_time >= ?
+          AND start_time < ?
+          AND duration_seconds IS NOT NULL
+    """
+    params = [client_id, day_start.isoformat(), day_end.isoformat()]
+
+    if exclude_entry_id is not None:
+        query = query.replace("AND duration_seconds IS NOT NULL",
+                             "AND duration_seconds IS NOT NULL AND id != ?")
+        params.append(exclude_entry_id)
+
+    cursor.execute(query, params)
+    total_seconds = cursor.fetchone()['total']
+    conn.close()
+
+    return total_seconds / 3600
 
 
 # === Helpers ===
