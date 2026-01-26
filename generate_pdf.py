@@ -183,9 +183,63 @@ def generate_invoice_pdf(invoice_number: str) -> Path:
     elements.append(details_row)
     elements.append(Spacer(1, 0.4*inch))
 
+    # Check if this is a retainer invoice
+    is_retainer = invoice.get('is_retainer_invoice', 0)
+    retainer_hours_applied = invoice.get('retainer_hours_applied') or 0
+    overage_hours = invoice.get('overage_hours') or 0
+
     # Line items table - hourly billing with daily breakdown
     daily_hours = db.get_invoice_hours(invoice['invoice_number'])
-    if daily_hours:
+
+    if is_retainer:
+        # Retainer invoice with time breakdown section
+        elements.append(Paragraph(f"<b>{invoice['description']}</b>", styles['Normal']))
+        elements.append(Spacer(1, 0.1*inch))
+
+        # Get actual worked hours from daily breakdown
+        worked_hours = sum(e['hours'] for e in daily_hours) if daily_hours else invoice['quantity']
+        retainer_minimum = retainer_hours_applied + overage_hours if overage_hours > 0 else retainer_hours_applied
+        if retainer_minimum == 0:
+            retainer_minimum = invoice['quantity']  # Fallback for exempted weeks
+
+        # Time Breakdown section
+        elements.append(Paragraph("<b>Time Breakdown:</b>", styles['Normal']))
+        breakdown_data = [
+            ['Hours Worked:', f"{worked_hours:.2f} hrs"],
+            ['Retainer Minimum:', f"{retainer_minimum:.2f} hrs"],
+        ]
+        breakdown_table = Table(breakdown_data, colWidths=[1.5*inch, 2*inch])
+        breakdown_table.setStyle(TableStyle([
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+            ('TOPPADDING', (0, 0), (-1, -1), 2),
+            ('TEXTCOLOR', (0, 0), (0, -1), colors.HexColor('#666666')),
+            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+        ]))
+        elements.append(breakdown_table)
+        elements.append(Spacer(1, 0.1*inch))
+
+        # Daily hours detail (if available)
+        if daily_hours:
+            elements.append(Paragraph("<b>Daily Detail:</b>", styles['Normal']))
+            line_items = [['Date', 'Hours', 'Amount']]
+            for entry in daily_hours:
+                dt = datetime.fromisoformat(entry['work_date'])
+                date_str = dt.strftime('%a %b %d')
+                hrs = entry['hours']
+                amt = hrs * invoice['rate']
+                line_items.append([date_str, f"{hrs:.2f}", db.format_currency(amt)])
+            # Billable total row
+            line_items.append(['Billable Total', f"{invoice['quantity']:.2f}", db.format_currency(invoice['total'])])
+            col_widths = [2.5*inch, 1.5*inch, 3*inch]
+        else:
+            line_items = [
+                ['Description', 'Rate', 'Hours', 'Amount'],
+                ['Retainer Billing', db.format_currency(invoice['rate']), f"{invoice['quantity']:.2f}", db.format_currency(invoice['total'])]
+            ]
+            col_widths = [3.5*inch, 1.25*inch, 1*inch, 1.25*inch]
+    elif daily_hours:
+        # Standard invoice with daily breakdown
         elements.append(Paragraph(f"<b>{invoice['description']}</b> - {db.format_currency(invoice['rate'])}/hr", styles['Normal']))
         elements.append(Spacer(1, 0.05*inch))
         line_items = [['Date', 'Hours', 'Amount']]
@@ -198,6 +252,7 @@ def generate_invoice_pdf(invoice_number: str) -> Path:
         line_items.append(['Total', f"{invoice['quantity']:.2f}", db.format_currency(invoice['total'])])
         col_widths = [2.5*inch, 1.5*inch, 3*inch]
     else:
+        # Standard invoice without daily breakdown
         line_items = [
             ['Description', 'Rate', 'Hours', 'Amount'],
             [invoice['description'], db.format_currency(invoice['rate']), f"{invoice['quantity']:.2f}", db.format_currency(invoice['total'])]
@@ -215,7 +270,7 @@ def generate_invoice_pdf(invoice_number: str) -> Path:
         ('LINEBELOW', (0, -1), (-1, -1), 1, colors.HexColor('#dddddd')),
         ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
     ]
-    if daily_hours:
+    if daily_hours or is_retainer:
         table_style.append(('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'))
         table_style.append(('LINEABOVE', (0, -1), (-1, -1), 1, colors.HexColor('#dddddd')))
     items_table.setStyle(TableStyle(table_style))

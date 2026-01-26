@@ -473,7 +473,8 @@ class ClientListPanel(ttk.Frame):
                 invoice_data['entries'],
                 invoice_data['description'],
                 invoice_data['payment_terms'],
-                invoice_data['payment_method']
+                invoice_data['payment_method'],
+                invoice_data.get('retainer_info')
             )
 
             if result['success']:
@@ -564,8 +565,8 @@ class ClientListPanel(ttk.Frame):
         self.wait_window(dialog)
 
         if dialog.result:
-            contact, company, rate, track, screenshots, ss_settings = dialog.result
-            client_id = db.save_client(contact, company, rate, track, screenshots, ss_settings)
+            contact, company, rate, track, screenshots, ss_settings, retainer_settings = dialog.result
+            client_id = db.save_client(contact, company, rate, track, screenshots, ss_settings, retainer_settings)
             # Save password to keyring if provided
             if hasattr(dialog, '_pending_password') and dialog._pending_password:
                 try:
@@ -581,8 +582,8 @@ class ClientListPanel(ttk.Frame):
         self.wait_window(dialog)
 
         if dialog.result:
-            contact, company, rate, track, screenshots, ss_settings = dialog.result
-            db.update_client(client['id'], contact, company, rate, track, screenshots, ss_settings)
+            contact, company, rate, track, screenshots, ss_settings, retainer_settings = dialog.result
+            db.update_client(client['id'], contact, company, rate, track, screenshots, ss_settings, retainer_settings)
             # Save password to keyring if provided
             if hasattr(dialog, '_pending_password') and dialog._pending_password:
                 try:
@@ -727,9 +728,43 @@ class ClientDialog(tk.Toplevel):
         # Initialize visibility
         self._toggle_screenshot_options()
 
+        # Retainer section
+        ttk.Separator(frame, orient='horizontal').grid(row=7, column=0, columnspan=2, sticky='ew', pady=(12, 8))
+
+        self.retainer_var = tk.BooleanVar(value=self.client.get('retainer_enabled', 0) if self.client else False)
+        self.retainer_check = ttk.Checkbutton(frame, text="Retainer Client (weekly minimum)",
+                                               variable=self.retainer_var, command=self._toggle_retainer_options)
+        self.retainer_check.grid(row=8, column=0, columnspan=2, sticky='w', pady=(0, 4))
+
+        # Retainer options frame
+        self.retainer_frame = tk.Frame(frame, bg=self.BG)
+        self.retainer_frame.grid(row=9, column=0, columnspan=2, sticky='w', padx=(20, 0), pady=(0, 4))
+
+        tk.Label(self.retainer_frame, text="Weekly Hours:", bg=self.BG, fg=self.FG,
+                font=('Segoe UI', 9)).grid(row=0, column=0, sticky='w', pady=2)
+        self.retainer_hours_var = tk.StringVar(
+            value=str(self.client.get('retainer_hours') or '') if self.client else ''
+        )
+        ttk.Entry(self.retainer_frame, textvariable=self.retainer_hours_var, width=10).grid(
+            row=0, column=1, sticky='w', pady=2, padx=(8, 0)
+        )
+
+        tk.Label(self.retainer_frame, text="Overage Rate ($):", bg=self.BG, fg=self.FG,
+                font=('Segoe UI', 9)).grid(row=1, column=0, sticky='w', pady=2)
+        self.retainer_rate_var = tk.StringVar(
+            value=str(self.client.get('retainer_rate') or '') if self.client else ''
+        )
+        ttk.Entry(self.retainer_frame, textvariable=self.retainer_rate_var, width=10).grid(
+            row=1, column=1, sticky='w', pady=2, padx=(8, 0)
+        )
+        tk.Label(self.retainer_frame, text="(blank = hourly rate)", bg=self.BG, fg=self.FG_DIM,
+                font=('Segoe UI', 8)).grid(row=1, column=2, sticky='w', pady=2, padx=(4, 0))
+
+        self._toggle_retainer_options()
+
         # Buttons
         btn_frame = tk.Frame(frame, bg=self.BG)
-        btn_frame.grid(row=7, column=0, columnspan=2, pady=(15, 0))
+        btn_frame.grid(row=10, column=0, columnspan=2, pady=(15, 0))
 
         ttk.Button(btn_frame, text="Save", command=self._save).pack(side='left', padx=5)
         ttk.Button(btn_frame, text="Cancel", command=self.destroy).pack(side='left', padx=5)
@@ -751,6 +786,13 @@ class ClientDialog(tk.Toplevel):
             self.remote_frame.grid()
         else:
             self.remote_frame.grid_remove()
+
+    def _toggle_retainer_options(self):
+        """Show/hide retainer options based on checkbox."""
+        if self.retainer_var.get():
+            self.retainer_frame.grid()
+        else:
+            self.retainer_frame.grid_remove()
 
     def _save(self):
         """Validate and save."""
@@ -782,7 +824,40 @@ class ClientDialog(tk.Toplevel):
         # Store password separately - will be saved to keyring after client is saved
         self._pending_password = self.unc_pass_var.get() if self.push_remote_var.get() else None
 
-        self.result = (contact, company, rate, self.track_var.get(), self.screenshot_var.get(), screenshot_settings)
+        # Build retainer settings dict
+        retainer_hours = None
+        retainer_rate = None
+        if self.retainer_var.get():
+            hours_str = self.retainer_hours_var.get().strip()
+            if hours_str:
+                try:
+                    retainer_hours = float(hours_str)
+                    if retainer_hours <= 0:
+                        raise ValueError()
+                except ValueError:
+                    messagebox.showerror("Error", "Please enter a valid weekly hours amount.", parent=self)
+                    return
+            else:
+                messagebox.showerror("Error", "Weekly hours is required for retainer clients.", parent=self)
+                return
+
+            rate_str = self.retainer_rate_var.get().strip()
+            if rate_str:
+                try:
+                    retainer_rate = float(rate_str)
+                    if retainer_rate < 0:
+                        raise ValueError()
+                except ValueError:
+                    messagebox.showerror("Error", "Please enter a valid overage rate.", parent=self)
+                    return
+
+        retainer_settings = {
+            'enabled': self.retainer_var.get(),
+            'hours': retainer_hours,
+            'rate': retainer_rate,
+        }
+
+        self.result = (contact, company, rate, self.track_var.get(), self.screenshot_var.get(), screenshot_settings, retainer_settings)
         self.destroy()
 
 
