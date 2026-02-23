@@ -65,21 +65,27 @@ class ManualEntryDialog(tk.Toplevel):
         self.range_frame.grid(row=3, column=0, columnspan=3, sticky='w', pady=2)
         hours_24 = [f"{i:02d}" for i in range(0, 24)]
         mins = ['00', '15', '30', '45']
+
+        # Default to current time (rounded down to 15-min interval)
+        now = datetime.now()
+        current_hour = f"{now.hour:02d}"
+        current_min_rounded = f"{(now.minute // 15) * 15:02d}"
+
         ttk.Label(self.range_frame, text="Start:").pack(side='left')
         self.start_hour = ttk.Combobox(self.range_frame, width=3, values=hours_24)
-        self.start_hour.set("09")
+        self.start_hour.set(current_hour)
         self.start_hour.pack(side='left', padx=2)
         ttk.Label(self.range_frame, text=":").pack(side='left')
         self.start_min = ttk.Combobox(self.range_frame, width=3, values=mins)
-        self.start_min.set("00")
+        self.start_min.set(current_min_rounded)
         self.start_min.pack(side='left', padx=(0, 10))
         ttk.Label(self.range_frame, text="End:").pack(side='left')
         self.end_hour = ttk.Combobox(self.range_frame, width=3, values=hours_24)
-        self.end_hour.set("17")
+        self.end_hour.set(current_hour)
         self.end_hour.pack(side='left', padx=2)
         ttk.Label(self.range_frame, text=":").pack(side='left')
         self.end_min = ttk.Combobox(self.range_frame, width=3, values=mins)
-        self.end_min.set("00")
+        self.end_min.set(current_min_rounded)
         self.end_min.pack(side='left')
         self.range_frame.grid_remove()  # Hide by default
 
@@ -122,9 +128,17 @@ class ManualEntryDialog(tk.Toplevel):
                 messagebox.showerror("Error", "Please enter a valid number of hours.", parent=self)
                 return
 
-            start_time = datetime.combine(date, datetime.min.time().replace(hour=9))
             duration_seconds = int(hours * 3600)
-            end_time = start_time + timedelta(seconds=duration_seconds)
+            now = datetime.now()
+
+            if date == now.date():
+                # Today: work backwards from current time
+                end_time = now.replace(second=0, microsecond=0)
+                start_time = end_time - timedelta(seconds=duration_seconds)
+            else:
+                # Past dates: work backwards from 5 PM
+                end_time = datetime.combine(date, datetime.min.time().replace(hour=17))
+                start_time = end_time - timedelta(seconds=duration_seconds)
         else:
             # Time range mode
             try:
@@ -986,6 +1000,10 @@ class TimeEntriesDialog(tk.Toplevel):
         btn_frame = ttk.Frame(self)
         btn_frame.pack(fill='x', padx=10, pady=5)
 
+        self.add_btn = ttk.Button(btn_frame, text="Add Entry", command=self._add_entry)
+        self.add_btn.pack(side='left', padx=2)
+        if not self.client_id:
+            self.add_btn.config(state='disabled')
         ttk.Button(btn_frame, text="Edit", command=self._edit_entry).pack(side='left', padx=2)
         ttk.Button(btn_frame, text="Delete", command=self._delete_entry).pack(side='left', padx=2)
         ttk.Button(btn_frame, text="Expand All", command=self._expand_all).pack(side='left', padx=2)
@@ -999,6 +1017,35 @@ class TimeEntriesDialog(tk.Toplevel):
 
         self.totals_label = ttk.Label(totals_frame, text="", font=('Segoe UI', 9))
         self.totals_label.pack(side='left')
+
+    def _add_entry(self):
+        """Add a manual time entry."""
+        if not self.client_id:
+            return
+
+        client = db.get_client(self.client_id)
+        if not client:
+            messagebox.showerror("Error", "Client not found.", parent=self)
+            return
+
+        dialog = ManualEntryDialog(self, client)
+        self.wait_window(dialog)
+
+        if dialog.result:
+            db.save_time_entry(
+                client_id=self.client_id,
+                start_time=dialog.result['start_time'],
+                end_time=dialog.result['end_time'],
+                duration_seconds=dialog.result['duration_seconds'],
+                description=dialog.result['description'],
+                entry_type='manual'
+            )
+            self._load_entries()
+            messagebox.showinfo(
+                "Success",
+                f"Added {dialog.result['hours']:.2f} hours.",
+                parent=self
+            )
 
     def _load_entries(self):
         """Load time entries into the tree, grouped by date."""

@@ -752,7 +752,7 @@ def record_payment(invoice_number: str, amount: float, date_paid: Optional[str] 
     new_paid = current_paid + amount
 
     # Determine status
-    if new_paid >= total:
+    if new_paid >= total - 0.01:
         status = 'paid'
     elif new_paid > 0:
         status = 'partial'

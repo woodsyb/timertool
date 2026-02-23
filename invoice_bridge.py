@@ -73,7 +73,8 @@ def create_invoice(
             rate = client['hourly_rate']
             billable_hours = worked_hours
 
-        total_amount = billable_hours * rate
+        billable_hours = round(billable_hours, 2)
+        total_amount = round(billable_hours * rate, 2)
 
         # Generate invoice number and dates
         invoice_number = db.get_next_invoice_number()
