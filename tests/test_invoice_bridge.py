@@ -219,5 +219,82 @@ class TestRetainerInvoiceCreation:
         assert invoice['total'] == 2250.0  # 15 * 150
 
 
+class TestWeeklyFlatRateInvoice:
+    """Test invoice creation with weekly flat rate billing."""
+
+    def test_weekly_flat_rate_invoice_fields(self, temp_db):
+        """Weekly flat rate invoice has correct billing_type, rate, quantity, total."""
+        client_id = db.save_client("Weekly Client", "Weekly Co", 100.0,
+                                   weekly_flat_rate_settings={'enabled': True, 'rate': 4000.0})
+        client = db.get_client(client_id)
+
+        # Create entries in two different weeks
+        start1 = datetime(2025, 1, 20, 9, 0, 0)  # Week 1
+        start2 = datetime(2025, 1, 27, 9, 0, 0)  # Week 2
+        db.save_time_entry(client_id, start1, duration_seconds=8 * 3600)
+        db.save_time_entry(client_id, start2, duration_seconds=8 * 3600)
+        entries = db.get_time_entries(client_id=client_id, invoiced=False)
+
+        weekly_info = {
+            'is_weekly_flat_rate': True,
+            'weeks': 2,
+            'weekly_rate': 4000.0,
+            'period_start': '2025-01-20',
+            'period_end': '2025-02-02',
+        }
+
+        result = invoice_bridge.create_invoice(
+            client=client,
+            entries=entries,
+            description="Biweekly services",
+            payment_terms="Net 30",
+            payment_method="ACH",
+            weekly_flat_rate_info=weekly_info,
+        )
+
+        assert result['success']
+
+        invoice = db.get_invoice(result['invoice_number'])
+        assert invoice['billing_type'] == 'weekly_flat'
+        assert invoice['rate'] == 4000.0
+        assert invoice['quantity'] == 2
+        assert invoice['total'] == 8000.0
+        assert invoice['period_start'] == '2025-01-20'
+        assert invoice['period_end'] == '2025-02-02'
+
+    def test_weekly_flat_rate_single_week(self, temp_db):
+        """Single week invoice has correct total."""
+        client_id = db.save_client("Weekly Client", "", 100.0,
+                                   weekly_flat_rate_settings={'enabled': True, 'rate': 3500.0})
+        client = db.get_client(client_id)
+
+        start = datetime(2025, 1, 20, 9, 0, 0)
+        db.save_time_entry(client_id, start, duration_seconds=40 * 3600)
+        entries = db.get_time_entries(client_id=client_id, invoiced=False)
+
+        weekly_info = {
+            'is_weekly_flat_rate': True,
+            'weeks': 1,
+            'weekly_rate': 3500.0,
+            'period_start': '2025-01-20',
+            'period_end': '2025-01-26',
+        }
+
+        result = invoice_bridge.create_invoice(
+            client=client,
+            entries=entries,
+            description="Week of Jan 20",
+            payment_terms="Due on Receipt",
+            payment_method="Domestic Wire",
+            weekly_flat_rate_info=weekly_info,
+        )
+
+        assert result['success']
+
+        invoice = db.get_invoice(result['invoice_number'])
+        assert invoice['total'] == 3500.0
+        assert invoice['billing_type'] == 'weekly_flat'
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

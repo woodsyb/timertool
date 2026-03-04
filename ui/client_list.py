@@ -474,7 +474,8 @@ class ClientListPanel(ttk.Frame):
                 invoice_data['description'],
                 invoice_data['payment_terms'],
                 invoice_data['payment_method'],
-                invoice_data.get('retainer_info')
+                retainer_info=invoice_data.get('retainer_info'),
+                weekly_flat_rate_info=invoice_data.get('weekly_flat_rate_info'),
             )
 
             if result['success']:
@@ -565,8 +566,8 @@ class ClientListPanel(ttk.Frame):
         self.wait_window(dialog)
 
         if dialog.result:
-            contact, company, rate, track, screenshots, ss_settings, retainer_settings = dialog.result
-            client_id = db.save_client(contact, company, rate, track, screenshots, ss_settings, retainer_settings)
+            contact, company, rate, track, screenshots, ss_settings, retainer_settings, weekly_settings = dialog.result
+            client_id = db.save_client(contact, company, rate, track, screenshots, ss_settings, retainer_settings, weekly_settings)
             # Save password to keyring if provided
             if hasattr(dialog, '_pending_password') and dialog._pending_password:
                 try:
@@ -582,8 +583,8 @@ class ClientListPanel(ttk.Frame):
         self.wait_window(dialog)
 
         if dialog.result:
-            contact, company, rate, track, screenshots, ss_settings, retainer_settings = dialog.result
-            db.update_client(client['id'], contact, company, rate, track, screenshots, ss_settings, retainer_settings)
+            contact, company, rate, track, screenshots, ss_settings, retainer_settings, weekly_settings = dialog.result
+            db.update_client(client['id'], contact, company, rate, track, screenshots, ss_settings, retainer_settings, weekly_settings)
             # Save password to keyring if provided
             if hasattr(dialog, '_pending_password') and dialog._pending_password:
                 try:
@@ -762,9 +763,32 @@ class ClientDialog(tk.Toplevel):
 
         self._toggle_retainer_options()
 
+        # Weekly flat rate section
+        ttk.Separator(frame, orient='horizontal').grid(row=10, column=0, columnspan=2, sticky='ew', pady=(12, 8))
+
+        self.weekly_var = tk.BooleanVar(value=self.client.get('weekly_flat_rate_enabled', 0) if self.client else False)
+        self.weekly_check = ttk.Checkbutton(frame, text="Weekly Flat Rate",
+                                             variable=self.weekly_var, command=self._toggle_weekly_options)
+        self.weekly_check.grid(row=11, column=0, columnspan=2, sticky='w', pady=(0, 4))
+
+        # Weekly flat rate options frame
+        self.weekly_frame = tk.Frame(frame, bg=self.BG)
+        self.weekly_frame.grid(row=12, column=0, columnspan=2, sticky='w', padx=(20, 0), pady=(0, 4))
+
+        tk.Label(self.weekly_frame, text="Weekly Rate ($):", bg=self.BG, fg=self.FG,
+                font=('Segoe UI', 9)).grid(row=0, column=0, sticky='w', pady=2)
+        self.weekly_rate_var = tk.StringVar(
+            value=str(self.client.get('weekly_flat_rate') or '') if self.client else ''
+        )
+        ttk.Entry(self.weekly_frame, textvariable=self.weekly_rate_var, width=10).grid(
+            row=0, column=1, sticky='w', pady=2, padx=(8, 0)
+        )
+
+        self._toggle_weekly_options()
+
         # Buttons
         btn_frame = tk.Frame(frame, bg=self.BG)
-        btn_frame.grid(row=10, column=0, columnspan=2, pady=(15, 0))
+        btn_frame.grid(row=13, column=0, columnspan=2, pady=(15, 0))
 
         ttk.Button(btn_frame, text="Save", command=self._save).pack(side='left', padx=5)
         ttk.Button(btn_frame, text="Cancel", command=self.destroy).pack(side='left', padx=5)
@@ -791,8 +815,21 @@ class ClientDialog(tk.Toplevel):
         """Show/hide retainer options based on checkbox."""
         if self.retainer_var.get():
             self.retainer_frame.grid()
+            # Mutual exclusion: disable weekly flat rate
+            self.weekly_var.set(False)
+            self.weekly_frame.grid_remove()
         else:
             self.retainer_frame.grid_remove()
+
+    def _toggle_weekly_options(self):
+        """Show/hide weekly flat rate options based on checkbox."""
+        if self.weekly_var.get():
+            self.weekly_frame.grid()
+            # Mutual exclusion: disable retainer
+            self.retainer_var.set(False)
+            self.retainer_frame.grid_remove()
+        else:
+            self.weekly_frame.grid_remove()
 
     def _save(self):
         """Validate and save."""
@@ -857,7 +894,28 @@ class ClientDialog(tk.Toplevel):
             'rate': retainer_rate,
         }
 
-        self.result = (contact, company, rate, self.track_var.get(), self.screenshot_var.get(), screenshot_settings, retainer_settings)
+        # Build weekly flat rate settings dict
+        weekly_flat_rate = None
+        if self.weekly_var.get():
+            rate_str = self.weekly_rate_var.get().strip()
+            if rate_str:
+                try:
+                    weekly_flat_rate = float(rate_str)
+                    if weekly_flat_rate <= 0:
+                        raise ValueError()
+                except ValueError:
+                    messagebox.showerror("Error", "Please enter a valid weekly rate.", parent=self)
+                    return
+            else:
+                messagebox.showerror("Error", "Weekly rate is required.", parent=self)
+                return
+
+        weekly_flat_rate_settings = {
+            'enabled': self.weekly_var.get(),
+            'rate': weekly_flat_rate,
+        }
+
+        self.result = (contact, company, rate, self.track_var.get(), self.screenshot_var.get(), screenshot_settings, retainer_settings, weekly_flat_rate_settings)
         self.destroy()
 
 

@@ -238,6 +238,25 @@ def generate_invoice_pdf(invoice_number: str) -> Path:
                 ['Retainer Billing', db.format_currency(invoice['rate']), f"{invoice['quantity']:.2f}", db.format_currency(invoice['total'])]
             ]
             col_widths = [3.5*inch, 1.25*inch, 1*inch, 1.25*inch]
+    elif invoice.get('billing_type') == 'weekly_flat':
+        # Weekly flat rate invoice - single line item with date range
+        period = ""
+        if invoice.get('period_start') and invoice.get('period_end'):
+            ps = datetime.fromisoformat(invoice['period_start'])
+            pe = datetime.fromisoformat(invoice['period_end'])
+            period = f" ({ps.strftime('%b %d')} - {pe.strftime('%b %d, %Y')})"
+
+        elements.append(Paragraph(f"<b>{invoice['description']}</b>{period}", styles['Normal']))
+        elements.append(Spacer(1, 0.05*inch))
+
+        weeks = int(invoice['quantity'])
+        line_items = [
+            ['Description', 'Weeks', 'Rate', 'Amount'],
+            [invoice['description'], str(weeks),
+             db.format_currency(invoice['rate']) + '/wk',
+             db.format_currency(invoice['total'])]
+        ]
+        col_widths = [3.5*inch, 0.75*inch, 1.25*inch, 1.5*inch]
     elif daily_hours:
         # Standard invoice with daily breakdown
         elements.append(Paragraph(f"<b>{invoice['description']}</b> - {db.format_currency(invoice['rate'])}/hr", styles['Normal']))
@@ -270,7 +289,8 @@ def generate_invoice_pdf(invoice_number: str) -> Path:
         ('LINEBELOW', (0, -1), (-1, -1), 1, colors.HexColor('#dddddd')),
         ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
     ]
-    if daily_hours or is_retainer:
+    is_weekly_flat = invoice.get('billing_type') == 'weekly_flat'
+    if daily_hours or is_retainer or is_weekly_flat:
         table_style.append(('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'))
         table_style.append(('LINEABOVE', (0, -1), (-1, -1), 1, colors.HexColor('#dddddd')))
     items_table.setStyle(TableStyle(table_style))

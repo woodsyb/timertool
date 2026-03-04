@@ -251,6 +251,10 @@ def init_db():
         cursor.execute("ALTER TABLE clients ADD COLUMN retainer_hours REAL")
     if 'retainer_rate' not in columns:
         cursor.execute("ALTER TABLE clients ADD COLUMN retainer_rate REAL")
+    if 'weekly_flat_rate_enabled' not in columns:
+        cursor.execute("ALTER TABLE clients ADD COLUMN weekly_flat_rate_enabled INTEGER DEFAULT 0")
+    if 'weekly_flat_rate' not in columns:
+        cursor.execute("ALTER TABLE clients ADD COLUMN weekly_flat_rate REAL")
 
     # Invoices (from invoices system)
     cursor.execute("""
@@ -284,6 +288,10 @@ def init_db():
         cursor.execute("ALTER TABLE invoices ADD COLUMN overage_hours REAL")
     if 'is_retainer_invoice' not in inv_cols:
         cursor.execute("ALTER TABLE invoices ADD COLUMN is_retainer_invoice INTEGER DEFAULT 0")
+    if 'period_start' not in inv_cols:
+        cursor.execute("ALTER TABLE invoices ADD COLUMN period_start TEXT")
+    if 'period_end' not in inv_cols:
+        cursor.execute("ALTER TABLE invoices ADD COLUMN period_end TEXT")
 
     # Invoice hours breakdown
     cursor.execute("""
@@ -451,11 +459,16 @@ def save_banking(data: Dict):
     cursor = conn.cursor()
     cursor.execute("""
         INSERT OR REPLACE INTO banking
-        (id, bank_name, routing_number, account_number, wire_instructions, swift_code, intl_wire_instructions)
-        VALUES (1, ?, ?, ?, ?, ?, ?)
+        (id, bank_name, routing_number, account_number, wire_instructions,
+         swift_code, intl_wire_instructions, domestic_wire_instructions,
+         paypal_email, credit_card_instructions)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (data['bank_name'], data['routing_number'],
           data['account_number'], data.get('wire_instructions'),
-          data.get('swift_code'), data.get('intl_wire_instructions')))
+          data.get('swift_code'), data.get('intl_wire_instructions'),
+          data.get('domestic_wire_instructions'),
+          data.get('paypal_email'),
+          data.get('credit_card_instructions')))
     conn.commit()
     conn.close()
 
@@ -476,7 +489,9 @@ def get_clients(include_archived: bool = False) -> List[Dict]:
                COALESCE(screenshot_keep_local, 1) as screenshot_keep_local,
                screenshot_remote_method, screenshot_unc_path, screenshot_unc_username,
                COALESCE(retainer_enabled, 0) as retainer_enabled,
-               retainer_hours, retainer_rate
+               retainer_hours, retainer_rate,
+               COALESCE(weekly_flat_rate_enabled, 0) as weekly_flat_rate_enabled,
+               weekly_flat_rate
         FROM clients
     """
     if not include_archived:
@@ -518,7 +533,9 @@ def get_client(client_id: int) -> Optional[Dict]:
                COALESCE(screenshot_keep_local, 1) as screenshot_keep_local,
                screenshot_remote_method, screenshot_unc_path, screenshot_unc_username,
                COALESCE(retainer_enabled, 0) as retainer_enabled,
-               retainer_hours, retainer_rate
+               retainer_hours, retainer_rate,
+               COALESCE(weekly_flat_rate_enabled, 0) as weekly_flat_rate_enabled,
+               weekly_flat_rate
         FROM clients WHERE id = ?
     """, (client_id,))
     row = cursor.fetchone()
@@ -579,7 +596,8 @@ def delete_client(client_id: int):
 def save_client(contact_name: str, company_name: str, hourly_rate: float,
                 track_activity: bool = True, capture_screenshots: bool = False,
                 screenshot_settings: Optional[Dict] = None,
-                retainer_settings: Optional[Dict] = None) -> int:
+                retainer_settings: Optional[Dict] = None,
+                weekly_flat_rate_settings: Optional[Dict] = None) -> int:
     """Save new client, return ID.
 
     screenshot_settings dict can contain:
@@ -587,9 +605,13 @@ def save_client(contact_name: str, company_name: str, hourly_rate: float,
 
     retainer_settings dict can contain:
         enabled, hours, rate
+
+    weekly_flat_rate_settings dict can contain:
+        enabled, rate
     """
     ss = screenshot_settings or {}
     rs = retainer_settings or {}
+    ws = weekly_flat_rate_settings or {}
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -597,8 +619,9 @@ def save_client(contact_name: str, company_name: str, hourly_rate: float,
                             hourly_rate, track_activity, capture_screenshots,
                             push_screenshots_remote, screenshot_keep_local,
                             screenshot_remote_method, screenshot_unc_path, screenshot_unc_username,
-                            retainer_enabled, retainer_hours, retainer_rate)
-        VALUES (?, ?, '', '', '', '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            retainer_enabled, retainer_hours, retainer_rate,
+                            weekly_flat_rate_enabled, weekly_flat_rate)
+        VALUES (?, ?, '', '', '', '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (company_name, contact_name, hourly_rate,
           1 if track_activity else 0, 1 if capture_screenshots else 0,
           1 if ss.get('push_remote') else 0,
@@ -608,7 +631,9 @@ def save_client(contact_name: str, company_name: str, hourly_rate: float,
           ss.get('unc_username'),
           1 if rs.get('enabled') else 0,
           rs.get('hours'),
-          rs.get('rate')))
+          rs.get('rate'),
+          1 if ws.get('enabled') else 0,
+          ws.get('rate')))
     client_id = cursor.lastrowid
     conn.commit()
     conn.close()
@@ -618,7 +643,8 @@ def save_client(contact_name: str, company_name: str, hourly_rate: float,
 def update_client(client_id: int, contact_name: str, company_name: str, hourly_rate: float,
                   track_activity: bool = True, capture_screenshots: bool = False,
                   screenshot_settings: Optional[Dict] = None,
-                  retainer_settings: Optional[Dict] = None):
+                  retainer_settings: Optional[Dict] = None,
+                  weekly_flat_rate_settings: Optional[Dict] = None):
     """Update existing client.
 
     screenshot_settings dict can contain:
@@ -626,9 +652,13 @@ def update_client(client_id: int, contact_name: str, company_name: str, hourly_r
 
     retainer_settings dict can contain:
         enabled, hours, rate
+
+    weekly_flat_rate_settings dict can contain:
+        enabled, rate
     """
     ss = screenshot_settings or {}
     rs = retainer_settings or {}
+    ws = weekly_flat_rate_settings or {}
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -636,7 +666,8 @@ def update_client(client_id: int, contact_name: str, company_name: str, hourly_r
            track_activity = ?, capture_screenshots = ?,
            push_screenshots_remote = ?, screenshot_keep_local = ?,
            screenshot_remote_method = ?, screenshot_unc_path = ?, screenshot_unc_username = ?,
-           retainer_enabled = ?, retainer_hours = ?, retainer_rate = ?
+           retainer_enabled = ?, retainer_hours = ?, retainer_rate = ?,
+           weekly_flat_rate_enabled = ?, weekly_flat_rate = ?
            WHERE id = ?""",
         (contact_name, company_name, hourly_rate,
          1 if track_activity else 0, 1 if capture_screenshots else 0,
@@ -648,6 +679,8 @@ def update_client(client_id: int, contact_name: str, company_name: str, hourly_r
          1 if rs.get('enabled') else 0,
          rs.get('hours'),
          rs.get('rate'),
+         1 if ws.get('enabled') else 0,
+         ws.get('rate'),
          client_id)
     )
     conn.commit()
@@ -765,6 +798,32 @@ def record_payment(invoice_number: str, amount: float, date_paid: Optional[str] 
     """, (new_paid, status, date_paid if status == 'paid' else None, invoice_number))
     conn.commit()
     conn.close()
+
+
+def update_invoice_payment_method(invoice_number: str, payment_method: str) -> bool:
+    """Update the payment method for an invoice. Returns True if invoice was found and updated."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE invoices SET payment_method = ? WHERE invoice_number = ?",
+        (payment_method, invoice_number))
+    updated = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return updated
+
+
+def update_invoice_terms(invoice_number: str, payment_terms: str, due_date: str) -> bool:
+    """Update payment terms and due date for an invoice. Returns True if found and updated."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE invoices SET payment_terms = ?, due_date = ? WHERE invoice_number = ?",
+        (payment_terms, due_date, invoice_number))
+    updated = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return updated
 
 
 def mark_invoice_paid(invoice_number: str, date_paid: Optional[str] = None):
@@ -1498,6 +1557,27 @@ def get_week_start_str(date: datetime) -> str:
     """Get the Monday date string (YYYY-MM-DD) for a given date's week."""
     week_start, _ = get_week_bounds(date)
     return week_start.strftime('%Y-%m-%d')
+
+
+def count_weeks_in_entries(entries: list) -> tuple:
+    """Count distinct Mon-Sun weeks from time entries.
+
+    Returns (count, period_start, period_end) where period_start is the
+    first Monday and period_end is the last Sunday (YYYY-MM-DD strings).
+    Returns (0, None, None) for empty entries.
+    """
+    week_starts = set()
+    for entry in entries:
+        dt = datetime.fromisoformat(entry['start_time'])
+        ws, _ = get_week_bounds(dt)
+        week_starts.add(ws.strftime('%Y-%m-%d'))
+    if not week_starts:
+        return (0, None, None)
+    sorted_weeks = sorted(week_starts)
+    first_monday = sorted_weeks[0]
+    last_monday = sorted_weeks[-1]
+    last_sunday = (datetime.fromisoformat(last_monday) + timedelta(days=6)).strftime('%Y-%m-%d')
+    return (len(week_starts), first_monday, last_sunday)
 
 
 def is_week_exempted(client_id: int, week_start: str) -> bool:

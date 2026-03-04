@@ -1129,5 +1129,205 @@ class TestDailyHours:
         assert hours == 2.0
 
 
+class TestUpdateInvoicePaymentMethod:
+    """Test updating an invoice's payment method."""
+
+    def _create_invoice(self, temp_db, payment_method='ACH'):
+        """Helper to create a client and invoice for testing."""
+        client_id = db.save_client("Test Contact", "Test Company", 100.0)
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO invoices (invoice_number, client_id, date_issued, due_date,
+                                  description, billing_type, rate, total,
+                                  payment_terms, payment_method, status)
+            VALUES ('INV-0001', ?, '2025-01-01', '2025-01-31', 'Test', 'hourly', 100, 500,
+                    'Net 30', ?, 'unpaid')
+        """, (client_id, payment_method))
+        conn.commit()
+        conn.close()
+        return 'INV-0001'
+
+    def test_update_payment_method(self, temp_db):
+        """Test changing payment method from ACH to Domestic Wire."""
+        inv_num = self._create_invoice(temp_db, payment_method='ACH')
+
+        result = db.update_invoice_payment_method(inv_num, 'Domestic Wire')
+        assert result is True
+
+        invoice = db.get_invoice(inv_num)
+        assert invoice['payment_method'] == 'Domestic Wire'
+
+    def test_update_payment_method_nonexistent(self, temp_db):
+        """Test updating a non-existent invoice returns False."""
+        result = db.update_invoice_payment_method('FAKE-9999', 'Check')
+        assert result is False
+
+    def test_update_payment_method_same_value(self, temp_db):
+        """Test updating to the same value succeeds."""
+        inv_num = self._create_invoice(temp_db, payment_method='ACH')
+
+        result = db.update_invoice_payment_method(inv_num, 'ACH')
+        assert result is True
+
+        invoice = db.get_invoice(inv_num)
+        assert invoice['payment_method'] == 'ACH'
+
+
+class TestUpdateInvoiceTerms:
+    """Test updating an invoice's payment terms and due date."""
+
+    def _create_invoice(self, temp_db):
+        client_id = db.save_client("Test Contact", "Test Company", 100.0)
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO invoices (invoice_number, client_id, date_issued, due_date,
+                                  description, billing_type, rate, total,
+                                  payment_terms, payment_method, status)
+            VALUES ('INV-0001', ?, '2025-01-01', '2025-01-31', 'Test', 'hourly', 100, 500,
+                    'Net 30', 'ACH', 'unpaid')
+        """, (client_id,))
+        conn.commit()
+        conn.close()
+        return 'INV-0001'
+
+    def test_update_terms_and_due_date(self, temp_db):
+        """Test changing payment terms also updates due date."""
+        inv_num = self._create_invoice(temp_db)
+
+        result = db.update_invoice_terms(inv_num, 'Net 7', '2025-01-08')
+        assert result is True
+
+        invoice = db.get_invoice(inv_num)
+        assert invoice['payment_terms'] == 'Net 7'
+        assert invoice['due_date'] == '2025-01-08'
+
+    def test_update_terms_nonexistent(self, temp_db):
+        """Test updating a non-existent invoice returns False."""
+        result = db.update_invoice_terms('FAKE-9999', 'Net 15', '2025-01-16')
+        assert result is False
+
+    def test_update_terms_due_on_receipt(self, temp_db):
+        """Test Due on Receipt sets due date to issue date."""
+        inv_num = self._create_invoice(temp_db)
+
+        result = db.update_invoice_terms(inv_num, 'Due on Receipt', '2025-01-01')
+        assert result is True
+
+        invoice = db.get_invoice(inv_num)
+        assert invoice['payment_terms'] == 'Due on Receipt'
+        assert invoice['due_date'] == '2025-01-01'
+
+
+class TestWeeklyFlatRate:
+    """Test weekly flat rate client settings."""
+
+    def test_save_client_with_weekly_flat_rate(self, temp_db):
+        """Test creating a client with weekly flat rate settings."""
+        weekly_settings = {
+            'enabled': True,
+            'rate': 4000.0,
+        }
+        client_id = db.save_client("Weekly Client", "Weekly Co", 100.0,
+                                   weekly_flat_rate_settings=weekly_settings)
+
+        client = db.get_client(client_id)
+        assert client['weekly_flat_rate_enabled'] == 1
+        assert client['weekly_flat_rate'] == 4000.0
+
+    def test_save_client_weekly_flat_rate_disabled_by_default(self, temp_db):
+        """Test that weekly flat rate is disabled by default."""
+        client_id = db.save_client("Normal Client", "Normal Co", 100.0)
+
+        client = db.get_client(client_id)
+        assert client['weekly_flat_rate_enabled'] == 0
+        assert client['weekly_flat_rate'] is None
+
+    def test_update_client_weekly_flat_rate(self, temp_db):
+        """Test updating a client to enable weekly flat rate."""
+        client_id = db.save_client("Test", "", 100.0)
+
+        weekly_settings = {
+            'enabled': True,
+            'rate': 3500.0,
+        }
+        db.update_client(client_id, "Test", "", 100.0,
+                         weekly_flat_rate_settings=weekly_settings)
+
+        client = db.get_client(client_id)
+        assert client['weekly_flat_rate_enabled'] == 1
+        assert client['weekly_flat_rate'] == 3500.0
+
+    def test_update_client_disable_weekly_flat_rate(self, temp_db):
+        """Test disabling weekly flat rate on a client."""
+        weekly_settings = {'enabled': True, 'rate': 4000.0}
+        client_id = db.save_client("Test", "", 100.0,
+                                   weekly_flat_rate_settings=weekly_settings)
+
+        # Disable it
+        db.update_client(client_id, "Test", "", 100.0,
+                         weekly_flat_rate_settings={'enabled': False, 'rate': None})
+
+        client = db.get_client(client_id)
+        assert client['weekly_flat_rate_enabled'] == 0
+        assert client['weekly_flat_rate'] is None
+
+
+class TestCountWeeksInEntries:
+    """Test counting distinct weeks from time entries."""
+
+    def test_single_week(self, temp_db):
+        """Entries all in one Mon-Sun week return count=1."""
+        entries = [
+            {'start_time': '2025-01-20T09:00:00'},  # Monday
+            {'start_time': '2025-01-22T10:00:00'},  # Wednesday
+            {'start_time': '2025-01-24T14:00:00'},  # Friday
+        ]
+        count, period_start, period_end = db.count_weeks_in_entries(entries)
+        assert count == 1
+        assert period_start == '2025-01-20'
+        assert period_end == '2025-01-26'  # Sunday
+
+    def test_two_weeks(self, temp_db):
+        """Entries spanning two weeks return count=2."""
+        entries = [
+            {'start_time': '2025-01-20T09:00:00'},  # Week 1 Monday
+            {'start_time': '2025-01-27T10:00:00'},  # Week 2 Monday
+        ]
+        count, period_start, period_end = db.count_weeks_in_entries(entries)
+        assert count == 2
+        assert period_start == '2025-01-20'
+        assert period_end == '2025-02-02'  # Sunday of week 2
+
+    def test_three_weeks_with_gap(self, temp_db):
+        """Entries in weeks 1 and 3 (skipping week 2) return count=2."""
+        entries = [
+            {'start_time': '2025-01-20T09:00:00'},  # Week 1
+            {'start_time': '2025-02-03T10:00:00'},  # Week 3 (skipped week 2)
+        ]
+        count, period_start, period_end = db.count_weeks_in_entries(entries)
+        assert count == 2
+        assert period_start == '2025-01-20'
+        assert period_end == '2025-02-09'  # Sunday of week 3
+
+    def test_empty_entries(self, temp_db):
+        """Empty entries list returns (0, None, None)."""
+        count, period_start, period_end = db.count_weeks_in_entries([])
+        assert count == 0
+        assert period_start is None
+        assert period_end is None
+
+    def test_multiple_entries_same_day(self, temp_db):
+        """Multiple entries on the same day count as one week."""
+        entries = [
+            {'start_time': '2025-01-20T09:00:00'},
+            {'start_time': '2025-01-20T14:00:00'},
+            {'start_time': '2025-01-20T16:00:00'},
+        ]
+        count, period_start, period_end = db.count_weeks_in_entries(entries)
+        assert count == 1
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

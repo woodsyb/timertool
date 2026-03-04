@@ -269,6 +269,7 @@ class BuildInvoiceDialog(tk.Toplevel):
         self.entry_vars = {}
         self.week_start = week_start  # For retainer mode
         self.is_retainer = client.get('retainer_enabled', 0)
+        self.is_weekly_flat_rate = client.get('weekly_flat_rate_enabled', 0)
 
         self.transient(parent)
         self.grab_set()
@@ -283,12 +284,18 @@ class BuildInvoiceDialog(tk.Toplevel):
         # Client info
         ttk.Label(frame, text=f"Invoice for: {self.client['name']}", font=('Segoe UI', 11, 'bold')).pack(anchor='w')
 
-        rate = self.client.get('retainer_rate') or self.client['hourly_rate']
-        ttk.Label(frame, text=f"Rate: ${rate:.2f}/hr").pack(anchor='w')
+        if self.is_weekly_flat_rate:
+            weekly_rate = self.client.get('weekly_flat_rate') or 0
+            ttk.Label(frame, text=f"Weekly Rate: ${weekly_rate:,.2f}/wk").pack(anchor='w')
+        else:
+            rate = self.client.get('retainer_rate') or self.client['hourly_rate']
+            ttk.Label(frame, text=f"Rate: ${rate:.2f}/hr").pack(anchor='w')
 
-        # Retainer breakdown section (only for retainer clients)
+        # Retainer or weekly flat rate breakdown section
         if self.is_retainer:
             self._create_retainer_section(frame)
+        elif self.is_weekly_flat_rate:
+            self._create_weekly_flat_rate_section(frame)
 
         ttk.Separator(frame, orient='horizontal').pack(fill='x', pady=10)
 
@@ -528,6 +535,34 @@ class BuildInvoiceDialog(tk.Toplevel):
         self.wait_window(dialog)
         return result['value']
 
+    def _create_weekly_flat_rate_section(self, parent):
+        """Create the weekly flat rate info section."""
+        weekly_rate = self.client.get('weekly_flat_rate') or 0
+
+        weekly_frame = tk.Frame(parent, bg='#2d2d2d', relief='ridge', bd=1)
+        weekly_frame.pack(fill='x', pady=(10, 0))
+
+        inner = tk.Frame(weekly_frame, bg='#2d2d2d', padx=12, pady=10)
+        inner.pack(fill='x')
+
+        tk.Label(inner, text=f"WEEKLY FLAT RATE: ${weekly_rate:,.2f}/week",
+                font=('Segoe UI', 10, 'bold'),
+                bg='#2d2d2d', fg='#00aaff').grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 8))
+
+        self.weekly_weeks_label = tk.Label(inner, text="Weeks: 0",
+                                           font=('Segoe UI', 9), bg='#2d2d2d', fg='#ffffff')
+        self.weekly_weeks_label.grid(row=1, column=0, sticky='w', pady=2)
+
+        self.weekly_period_label = tk.Label(inner, text="Period: --",
+                                            font=('Segoe UI', 9), bg='#2d2d2d', fg='#aaaaaa')
+        self.weekly_period_label.grid(row=2, column=0, sticky='w', pady=2)
+
+        tk.Frame(inner, bg='#444444', height=1).grid(row=3, column=0, columnspan=2, sticky='ew', pady=8)
+
+        self.weekly_total_label = tk.Label(inner, text="TOTAL: $0.00",
+                                           font=('Segoe UI', 11, 'bold'), bg='#2d2d2d', fg='#00ff00')
+        self.weekly_total_label.grid(row=4, column=0, sticky='w', pady=(4, 0))
+
     def _filter_entries(self):
         """Filter entries by date range."""
         start = self.start_date.get_date()
@@ -544,31 +579,55 @@ class BuildInvoiceDialog(tk.Toplevel):
 
     def _update_totals(self):
         """Update the totals display."""
+        selected_entries = []
         total_seconds = 0
         for entry in self.entries:
             if self.entry_vars.get(entry['id'], tk.BooleanVar(value=False)).get():
                 total_seconds += entry['duration_seconds'] or 0
+                selected_entries.append(entry)
 
         worked_hours = total_seconds / 3600
-        rate = self.client.get('retainer_rate') or self.client['hourly_rate']
 
-        # Calculate billable hours (retainer vs actual)
-        if self.is_retainer and not getattr(self, 'is_exempted', False):
-            retainer_hours = self.client.get('retainer_hours') or 0
-            billable_hours = max(worked_hours, retainer_hours)
+        if self.is_weekly_flat_rate:
+            # Weekly flat rate: total = weeks * weekly_rate
+            weekly_rate = self.client.get('weekly_flat_rate') or 0
+            num_weeks, period_start, period_end = db.count_weeks_in_entries(selected_entries)
+            total_amount = num_weeks * weekly_rate
+
+            self.total_hours_label.config(text=f"Total: {num_weeks} week{'s' if num_weeks != 1 else ''}")
+            self.total_amount_label.config(text=timer_engine.format_currency(total_amount))
+
+            # Update weekly section labels
+            if hasattr(self, 'weekly_weeks_label'):
+                self.weekly_weeks_label.config(text=f"Weeks: {num_weeks}")
+                if period_start and period_end:
+                    ps = datetime.fromisoformat(period_start)
+                    pe = datetime.fromisoformat(period_end)
+                    self.weekly_period_label.config(
+                        text=f"Period: {ps.strftime('%b %d')} - {pe.strftime('%b %d, %Y')}")
+                else:
+                    self.weekly_period_label.config(text="Period: --")
+                self.weekly_total_label.config(text=f"TOTAL: {timer_engine.format_currency(total_amount)}")
         else:
-            billable_hours = worked_hours
+            rate = self.client.get('retainer_rate') or self.client['hourly_rate']
 
-        total_amount = billable_hours * rate
+            # Calculate billable hours (retainer vs actual)
+            if self.is_retainer and not getattr(self, 'is_exempted', False):
+                retainer_hours = self.client.get('retainer_hours') or 0
+                billable_hours = max(worked_hours, retainer_hours)
+            else:
+                billable_hours = worked_hours
 
-        self.total_hours_label.config(text=f"Total: {billable_hours:.2f} hrs")
-        self.total_amount_label.config(text=timer_engine.format_currency(total_amount))
+            total_amount = billable_hours * rate
 
-        # Update retainer breakdown if present
-        if self.is_retainer and hasattr(self, 'worked_hours_label'):
-            self.worked_hours_label.config(text=f"Hours Worked: {worked_hours:.2f} hrs")
-            self.billable_hours_label.config(text=f"Billable Hours: {billable_hours:.2f} hrs")
-            self.retainer_total_label.config(text=f"TOTAL: {timer_engine.format_currency(total_amount)}")
+            self.total_hours_label.config(text=f"Total: {billable_hours:.2f} hrs")
+            self.total_amount_label.config(text=timer_engine.format_currency(total_amount))
+
+            # Update retainer breakdown if present
+            if self.is_retainer and hasattr(self, 'worked_hours_label'):
+                self.worked_hours_label.config(text=f"Hours Worked: {worked_hours:.2f} hrs")
+                self.billable_hours_label.config(text=f"Billable Hours: {billable_hours:.2f} hrs")
+                self.retainer_total_label.config(text=f"TOTAL: {timer_engine.format_currency(total_amount)}")
 
     def _create(self):
         """Create the invoice."""
@@ -586,7 +645,19 @@ class BuildInvoiceDialog(tk.Toplevel):
         worked_hours = total_seconds / 3600
 
         retainer_info = None
-        if self.is_retainer:
+        weekly_flat_rate_info = None
+
+        if self.is_weekly_flat_rate:
+            weekly_rate = self.client.get('weekly_flat_rate') or 0
+            num_weeks, period_start, period_end = db.count_weeks_in_entries(selected_entries)
+            weekly_flat_rate_info = {
+                'is_weekly_flat_rate': True,
+                'weeks': num_weeks,
+                'weekly_rate': weekly_rate,
+                'period_start': period_start,
+                'period_end': period_end,
+            }
+        elif self.is_retainer:
             retainer_hours = self.client.get('retainer_hours') or 0
             is_exempted = getattr(self, 'is_exempted', False)
             if is_exempted:
@@ -615,6 +686,7 @@ class BuildInvoiceDialog(tk.Toplevel):
             'payment_terms': self.terms_var.get(),
             'payment_method': self.method_var.get(),
             'retainer_info': retainer_info,
+            'weekly_flat_rate_info': weekly_flat_rate_info,
         }
         self.destroy()
 
@@ -808,6 +880,7 @@ class InvoiceListDialog(tk.Toplevel):
         btn_frame.pack(fill='x', padx=10, pady=10)
 
         ttk.Button(btn_frame, text="Open PDF", command=self._open_pdf).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Reissue PDF", command=self._reissue_pdf).pack(side='left', padx=5)
         ttk.Button(btn_frame, text="Mark Paid", command=self._mark_paid).pack(side='left', padx=5)
         ttk.Button(btn_frame, text="Delete", command=self._delete_invoice).pack(side='left', padx=5)
         ttk.Button(btn_frame, text="Close", command=self.destroy).pack(side='right', padx=5)
@@ -859,6 +932,45 @@ class InvoiceListDialog(tk.Toplevel):
                 subprocess.run(['xdg-open', str(pdf_path)])
         else:
             messagebox.showinfo("Not Found", f"PDF for {invoice_number} not found.", parent=self)
+
+    def _reissue_pdf(self):
+        """Reissue the selected invoice PDF, optionally changing payment method."""
+        selection = self.tree.selection()
+        if not selection:
+            return
+
+        invoice_number = selection[0]
+        invoice = db.get_invoice(invoice_number)
+
+        if not invoice:
+            messagebox.showerror("Error", f"Invoice {invoice_number} not found.", parent=self)
+            return
+
+        dialog = ReissuePDFDialog(self, invoice)
+        self.wait_window(dialog)
+
+        if dialog.result:
+            new_method = dialog.result['payment_method']
+            new_terms = dialog.result['payment_terms']
+
+            if new_method != invoice['payment_method']:
+                db.update_invoice_payment_method(invoice_number, new_method)
+
+            if new_terms != invoice['payment_terms']:
+                from datetime import datetime
+                from invoice_bridge import calculate_due_date
+                issue_date = datetime.strptime(invoice['date_issued'], '%Y-%m-%d')
+                new_due = calculate_due_date(new_terms, issue_date).strftime('%Y-%m-%d')
+                db.update_invoice_terms(invoice_number, new_terms, new_due)
+
+            try:
+                from generate_pdf import generate_invoice_pdf
+                generate_invoice_pdf(invoice_number)
+                messagebox.showinfo("PDF Reissued",
+                    f"PDF for {invoice_number} has been regenerated.", parent=self)
+                self._load_invoices()
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to generate PDF:\n{e}", parent=self)
 
     def _mark_paid(self):
         """Mark the selected invoice as paid (full or partial)."""
@@ -1552,6 +1664,86 @@ class DeleteInvoiceDialog(tk.Toplevel):
         self.destroy()
 
 
+class ReissuePDFDialog(tk.Toplevel):
+    """Dialog for reissuing an invoice PDF with optional payment method change."""
+
+    def __init__(self, parent, invoice: Dict):
+        super().__init__(parent)
+        self.title("Reissue Invoice PDF")
+        self.configure(bg='#1c1c1c')
+        self.invoice = invoice
+        self.result = None
+
+        self.transient(parent)
+        self.grab_set()
+
+        self._create_widgets()
+        self.geometry('+%d+%d' % (parent.winfo_rootx() + 50, parent.winfo_rooty() + 50))
+
+    def _create_widgets(self):
+        frame = ttk.Frame(self, padding=15)
+        frame.pack(fill='both', expand=True)
+
+        # Invoice info header
+        ttk.Label(frame, text=f"Reissue: {self.invoice['invoice_number']}",
+                 font=('Segoe UI', 11, 'bold')).grid(
+            row=0, column=0, columnspan=2, sticky='w', pady=(0, 5))
+
+        ttk.Label(frame, text=f"Client: {self.invoice.get('client_name', 'Unknown')}").grid(
+            row=1, column=0, columnspan=2, sticky='w', pady=2)
+        ttk.Label(frame, text=f"Date: {self.invoice['date_issued']}").grid(
+            row=2, column=0, columnspan=2, sticky='w', pady=2)
+        ttk.Label(frame, text=f"Total: ${self.invoice['total']:.2f}").grid(
+            row=3, column=0, columnspan=2, sticky='w', pady=2)
+
+        ttk.Separator(frame, orient='horizontal').grid(
+            row=4, column=0, columnspan=2, sticky='ew', pady=10)
+
+        # Payment method selection
+        ttk.Label(frame, text="Payment Method:", font=('Segoe UI', 9, 'bold')).grid(
+            row=5, column=0, sticky='w', pady=2)
+        self.method_var = tk.StringVar(value=self.invoice['payment_method'])
+        method_combo = ttk.Combobox(frame, textvariable=self.method_var, width=18, state='readonly')
+        method_combo['values'] = ('ACH', 'Domestic Wire', 'International Wire', 'Check')
+        method_combo.grid(row=5, column=1, sticky='w', pady=2)
+
+        # Payment terms selection
+        ttk.Label(frame, text="Payment Terms:", font=('Segoe UI', 9, 'bold')).grid(
+            row=6, column=0, sticky='w', pady=2)
+        self.terms_var = tk.StringVar(value=self.invoice['payment_terms'])
+        terms_combo = ttk.Combobox(frame, textvariable=self.terms_var, width=18, state='readonly')
+        terms_combo['values'] = ('Due on Receipt', 'Net 7', 'Net 15', 'Net 30')
+        terms_combo.grid(row=6, column=1, sticky='w', pady=2)
+
+        current_method = self.invoice['payment_method']
+        current_terms = self.invoice['payment_terms']
+        ttk.Label(frame, text=f"Current: {current_method}, {current_terms}",
+                 font=('Segoe UI', 8), foreground='gray').grid(
+            row=7, column=0, columnspan=2, sticky='w', pady=(0, 5))
+
+        # Info text
+        ttk.Label(frame, text="PDF will be regenerated with current\nbusiness and banking details.",
+                 font=('Segoe UI', 8), foreground='gray').grid(
+            row=8, column=0, columnspan=2, sticky='w', pady=(5, 10))
+
+        # Buttons
+        btn_frame = ttk.Frame(frame)
+        btn_frame.grid(row=9, column=0, columnspan=2, pady=(5, 0))
+
+        ttk.Button(btn_frame, text="Reissue PDF", command=self._reissue).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=self.destroy).pack(side='left', padx=5)
+
+        self.bind('<Return>', lambda e: self._reissue())
+        self.bind('<Escape>', lambda e: self.destroy())
+
+    def _reissue(self):
+        self.result = {
+            'payment_method': self.method_var.get(),
+            'payment_terms': self.terms_var.get(),
+        }
+        self.destroy()
+
+
 class SettingsDialog(tk.Toplevel):
     """Dialog for app settings."""
 
@@ -1779,10 +1971,26 @@ class BusinessSetupDialog(tk.Toplevel):
         row = 16
         ttk.Label(frame, text="Domestic Wire", font=('Segoe UI', 10, 'bold')).grid(row=row, column=0, columnspan=2, sticky='w', pady=(15, 5))
         row += 1
-        self.domestic_wire_text = tk.Text(frame, width=40, height=4)
-        self.domestic_wire_text.grid(row=row, column=0, columnspan=2, sticky='w', pady=2)
-        self.domestic_wire_text.insert('1.0', banking.get('domestic_wire_instructions', '') or '')
-        row += 1
+
+        # Parse existing domestic wire instructions into fields
+        dw_parsed = self._parse_domestic_wire(banking.get('domestic_wire_instructions', '') or '')
+
+        dw_fields = [
+            ('Bank Name:', 'dw_bank_name', dw_parsed.get('bank', '')),
+            ('Bank Address:', 'dw_address', dw_parsed.get('address', '')),
+            ('ABA/Routing:', 'dw_routing', dw_parsed.get('routing', '')),
+            ('Account:', 'dw_account', dw_parsed.get('account', '')),
+            ('Account Name:', 'dw_account_name', dw_parsed.get('account_name', '')),
+            ('For Further Credit To:', 'dw_beneficiary', dw_parsed.get('beneficiary', '')),
+        ]
+
+        self.dw_vars = {}
+        for label, key, value in dw_fields:
+            ttk.Label(frame, text=label).grid(row=row, column=0, sticky='w', pady=2)
+            var = tk.StringVar(value=value)
+            self.dw_vars[key] = var
+            ttk.Entry(frame, textvariable=var, width=35).grid(row=row, column=1, sticky='w', pady=2)
+            row += 1
 
         # International Wire Section
         ttk.Label(frame, text="International Wire (SWIFT)", font=('Segoe UI', 10, 'bold')).grid(row=row, column=0, columnspan=2, sticky='w', pady=(15, 5))
@@ -1817,6 +2025,43 @@ class BusinessSetupDialog(tk.Toplevel):
 
         self.bind('<Escape>', lambda e: self.destroy())
 
+    @staticmethod
+    def _parse_domestic_wire(text):
+        """Parse domestic wire instructions text into structured fields."""
+        result = {}
+        prefixes = {
+            'Bank:': 'bank',
+            'Address:': 'address',
+            'ABA/Routing:': 'routing',
+            'Account Name:': 'account_name',
+            'Account:': 'account',
+            'For Further Credit To:': 'beneficiary',
+        }
+        for line in (text or '').split('\n'):
+            line = line.strip()
+            for prefix, key in prefixes.items():
+                if line.startswith(prefix):
+                    result[key] = line[len(prefix):].strip()
+                    break
+        return result
+
+    def _format_domestic_wire(self):
+        """Format domestic wire fields into text for storage."""
+        parts = []
+        field_map = [
+            ('dw_bank_name', 'Bank:'),
+            ('dw_address', 'Address:'),
+            ('dw_routing', 'ABA/Routing:'),
+            ('dw_account', 'Account:'),
+            ('dw_account_name', 'Account Name:'),
+            ('dw_beneficiary', 'For Further Credit To:'),
+        ]
+        for key, prefix in field_map:
+            val = self.dw_vars[key].get().strip()
+            if val:
+                parts.append(f"{prefix} {val}")
+        return '\n'.join(parts)
+
     def _save(self):
         """Save business and banking info."""
         # Validate required fields
@@ -1838,7 +2083,7 @@ class BusinessSetupDialog(tk.Toplevel):
 
         # Save banking info
         banking_data = {key: var.get().strip() for key, var in self.banking_vars.items()}
-        banking_data['domestic_wire_instructions'] = self.domestic_wire_text.get('1.0', 'end').strip()
+        banking_data['domestic_wire_instructions'] = self._format_domestic_wire()
         banking_data['wire_instructions'] = self.wire_text.get('1.0', 'end').strip()
         banking_data['credit_card_instructions'] = self.cc_text.get('1.0', 'end').strip()
         db.save_banking(banking_data)

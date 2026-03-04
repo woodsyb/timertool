@@ -294,7 +294,9 @@ class MainWindow(ttk.Frame):
                 invoice_data['entries'],
                 invoice_data['description'],
                 invoice_data['payment_terms'],
-                invoice_data['payment_method']
+                invoice_data['payment_method'],
+                retainer_info=invoice_data.get('retainer_info'),
+                weekly_flat_rate_info=invoice_data.get('weekly_flat_rate_info'),
             )
 
             if result['success']:

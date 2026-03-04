@@ -23,7 +23,8 @@ def create_invoice(
     description: str,
     payment_terms: str,
     payment_method: str,
-    retainer_info: Optional[Dict] = None
+    retainer_info: Optional[Dict] = None,
+    weekly_flat_rate_info: Optional[Dict] = None
 ) -> Dict:
     """Create an invoice from time entries.
 
@@ -33,15 +34,13 @@ def create_invoice(
         description: Invoice description
         payment_terms: Payment terms string
         payment_method: Payment method string
-        retainer_info: Optional dict with retainer billing details:
-            - is_retainer: bool
-            - week_start: str (YYYY-MM-DD)
-            - worked_hours: float
-            - retainer_hours: float
-            - billable_hours: float
-            - retainer_hours_applied: float
-            - overage_hours: float
-            - is_exempted: bool
+        retainer_info: Optional dict with retainer billing details
+        weekly_flat_rate_info: Optional dict with weekly flat rate details:
+            - is_weekly_flat_rate: bool
+            - weeks: int (number of weeks)
+            - weekly_rate: float
+            - period_start: str (YYYY-MM-DD)
+            - period_end: str (YYYY-MM-DD)
 
     Returns dict with:
         success: bool
@@ -58,42 +57,56 @@ def create_invoice(
         total_seconds = sum(e['duration_seconds'] or 0 for e in entries)
         worked_hours = total_seconds / 3600
 
-        # Determine rate and hours based on retainer status
+        # Determine billing type, rate, and totals
+        billing_type = 'hourly'
         is_retainer_invoice = False
         retainer_hours_applied = None
         overage_hours = None
+        period_start = None
+        period_end = None
 
-        if retainer_info and retainer_info.get('is_retainer'):
+        if weekly_flat_rate_info and weekly_flat_rate_info.get('is_weekly_flat_rate'):
+            billing_type = 'weekly_flat'
+            rate = weekly_flat_rate_info['weekly_rate']
+            num_weeks = weekly_flat_rate_info['weeks']
+            billable_hours = num_weeks  # Store weeks count in quantity
+            total_amount = round(rate * num_weeks, 2)
+            period_start = weekly_flat_rate_info.get('period_start')
+            period_end = weekly_flat_rate_info.get('period_end')
+        elif retainer_info and retainer_info.get('is_retainer'):
             is_retainer_invoice = True
             rate = client.get('retainer_rate') or client['hourly_rate']
             billable_hours = retainer_info['billable_hours']
             retainer_hours_applied = retainer_info.get('retainer_hours_applied', 0)
             overage_hours = retainer_info.get('overage_hours', 0)
+            billable_hours = round(billable_hours, 2)
+            total_amount = round(billable_hours * rate, 2)
         else:
             rate = client['hourly_rate']
             billable_hours = worked_hours
-
-        billable_hours = round(billable_hours, 2)
-        total_amount = round(billable_hours * rate, 2)
+            billable_hours = round(billable_hours, 2)
+            total_amount = round(billable_hours * rate, 2)
 
         # Generate invoice number and dates
         invoice_number = db.get_next_invoice_number()
         date_issued = datetime.now()
         due_date = calculate_due_date(payment_terms, date_issued)
 
-        # Create invoice record with retainer fields
+        # Create invoice record
         cursor.execute("""
             INSERT INTO invoices
             (invoice_number, client_id, date_issued, due_date, description,
              billing_type, rate, quantity, total, payment_terms, payment_method, status,
-             is_retainer_invoice, retainer_hours_applied, overage_hours)
-            VALUES (?, ?, ?, ?, ?, 'hourly', ?, ?, ?, ?, ?, 'unpaid', ?, ?, ?)
+             is_retainer_invoice, retainer_hours_applied, overage_hours,
+             period_start, period_end)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unpaid', ?, ?, ?, ?, ?)
         """, (
             invoice_number,
             client['id'],
             date_issued.strftime('%Y-%m-%d'),
             due_date.strftime('%Y-%m-%d'),
             description,
+            billing_type,
             rate,
             billable_hours,
             total_amount,
@@ -101,7 +114,9 @@ def create_invoice(
             payment_method,
             1 if is_retainer_invoice else 0,
             retainer_hours_applied,
-            overage_hours
+            overage_hours,
+            period_start,
+            period_end
         ))
 
         # Aggregate hours by date
