@@ -239,7 +239,7 @@ def generate_invoice_pdf(invoice_number: str) -> Path:
             ]
             col_widths = [3.5*inch, 1.25*inch, 1*inch, 1.25*inch]
     elif invoice.get('billing_type') == 'weekly_flat':
-        # Weekly flat rate invoice - single line item with date range
+        # Weekly flat rate invoice - per-week line items with date ranges
         period = ""
         if invoice.get('period_start') and invoice.get('period_end'):
             ps = datetime.fromisoformat(invoice['period_start'])
@@ -249,14 +249,22 @@ def generate_invoice_pdf(invoice_number: str) -> Path:
         elements.append(Paragraph(f"<b>{invoice['description']}</b>{period}", styles['Normal']))
         elements.append(Spacer(1, 0.05*inch))
 
-        weeks = int(invoice['quantity'])
-        line_items = [
-            ['Description', 'Weeks', 'Rate', 'Amount'],
-            [invoice['description'], str(weeks),
-             db.format_currency(invoice['rate']) + '/wk',
-             db.format_currency(invoice['total'])]
-        ]
-        col_widths = [3.5*inch, 0.75*inch, 1.25*inch, 1.5*inch]
+        weekly_rate = invoice['rate']
+        weekly_breakdown = db.get_weekly_breakdown(invoice['invoice_number'])
+
+        line_items = [['Week', 'Period', 'Rate', 'Amount']]
+        for i, week in enumerate(weekly_breakdown, 1):
+            ws = datetime.fromisoformat(week['week_start'])
+            we = datetime.fromisoformat(week['week_end'])
+            period_str = f"{ws.strftime('%b %d')} - {we.strftime('%b %d, %Y')}"
+            line_items.append([
+                f"Week {i}",
+                period_str,
+                db.format_currency(weekly_rate) + '/wk',
+                db.format_currency(weekly_rate),
+            ])
+        line_items.append(['Total', '', '', db.format_currency(invoice['total'])])
+        col_widths = [1*inch, 2.75*inch, 1.25*inch, 1.5*inch]
     elif daily_hours:
         # Standard invoice with daily breakdown
         elements.append(Paragraph(f"<b>{invoice['description']}</b> - {db.format_currency(invoice['rate'])}/hr", styles['Normal']))

@@ -816,8 +816,9 @@ class ClientDialog(tk.Toplevel):
         if self.retainer_var.get():
             self.retainer_frame.grid()
             # Mutual exclusion: disable weekly flat rate
-            self.weekly_var.set(False)
-            self.weekly_frame.grid_remove()
+            if hasattr(self, 'weekly_var'):
+                self.weekly_var.set(False)
+                self.weekly_frame.grid_remove()
         else:
             self.retainer_frame.grid_remove()
 
@@ -826,8 +827,9 @@ class ClientDialog(tk.Toplevel):
         if self.weekly_var.get():
             self.weekly_frame.grid()
             # Mutual exclusion: disable retainer
-            self.retainer_var.set(False)
-            self.retainer_frame.grid_remove()
+            if hasattr(self, 'retainer_var'):
+                self.retainer_var.set(False)
+                self.retainer_frame.grid_remove()
         else:
             self.weekly_frame.grid_remove()
 

@@ -764,6 +764,28 @@ def get_invoice_hours(invoice_number: str) -> List[Dict]:
     return [dict(row) for row in rows]
 
 
+def get_weekly_breakdown(invoice_number: str) -> List[Dict]:
+    """Group invoice_hours by Mon-Sun week for weekly flat rate display.
+
+    Returns list of dicts with week_start, week_end, hours, sorted by week_start.
+    """
+    daily = get_invoice_hours(invoice_number)
+    if not daily:
+        return []
+
+    weeks = {}
+    for entry in daily:
+        dt = datetime.fromisoformat(entry['work_date'])
+        ws, we = get_week_bounds(dt)
+        ws_str = ws.strftime('%Y-%m-%d')
+        we_str = we.strftime('%Y-%m-%d')
+        if ws_str not in weeks:
+            weeks[ws_str] = {'week_start': ws_str, 'week_end': we_str, 'hours': 0.0}
+        weeks[ws_str]['hours'] += entry['hours']
+
+    return sorted(weeks.values(), key=lambda w: w['week_start'])
+
+
 def record_payment(invoice_number: str, amount: float, date_paid: Optional[str] = None):
     """Record a payment for an invoice. Updates status if fully paid."""
     if date_paid is None:

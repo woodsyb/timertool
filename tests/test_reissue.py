@@ -76,6 +76,42 @@ def _setup_full_invoice(temp_db, payment_method='ACH'):
     return result['invoice_number']
 
 
+def _setup_weekly_flat_rate_invoice(temp_db):
+    """Set up a weekly flat rate invoice with entries in two weeks."""
+    db.save_business_info({
+        'company_name': 'Test LLC', 'owner_name': 'Test Owner',
+        'address': '123 Test St', 'city': 'Testville', 'state': 'TX',
+        'zip': '75001', 'phone': '555-0100', 'email': 'test@test.com',
+        'ein': '12-3456789',
+    })
+    db.save_banking({
+        'bank_name': 'Test Bank', 'routing_number': '111000025',
+        'account_number': '123456789',
+    })
+
+    client_id = db.save_client("Weekly Client", "Weekly Co", 100.0,
+                               weekly_flat_rate_settings={'enabled': True, 'rate': 4000.0})
+    client = db.get_client(client_id)
+
+    # Entries in two different weeks (Mon Jan 20 and Mon Jan 27)
+    db.save_time_entry(client_id, datetime(2025, 1, 20, 9, 0, 0), duration_seconds=8 * 3600)
+    db.save_time_entry(client_id, datetime(2025, 1, 27, 9, 0, 0), duration_seconds=8 * 3600)
+    entries = db.get_time_entries(client_id=client_id, invoiced=False)
+
+    result = invoice_bridge.create_invoice(
+        client=client, entries=entries,
+        description="Biweekly services",
+        payment_terms="Net 30", payment_method="ACH",
+        weekly_flat_rate_info={
+            'is_weekly_flat_rate': True, 'weeks': 2,
+            'weekly_rate': 4000.0,
+            'period_start': '2025-01-20', 'period_end': '2025-02-02',
+        },
+    )
+    assert result['success']
+    return result['invoice_number']
+
+
 class TestReissuePDF:
     """Test invoice PDF reissue (regeneration)."""
 
@@ -203,3 +239,83 @@ class TestReissuePDF:
         pdf_path = generate_invoice_pdf(result['invoice_number'])
         assert pdf_path.exists()
         assert pdf_path.stat().st_size > 0
+
+
+class TestWeeklyBreakdown:
+    """Test weekly breakdown grouping from invoice_hours."""
+
+    def test_get_weekly_breakdown_two_weeks(self, temp_db):
+        """Groups daily hours into weekly buckets with date ranges."""
+        inv_num = _setup_weekly_flat_rate_invoice(temp_db)
+        breakdown = db.get_weekly_breakdown(inv_num)
+
+        assert len(breakdown) == 2
+        # Week 1: Jan 20-26
+        assert breakdown[0]['week_start'] == '2025-01-20'
+        assert breakdown[0]['week_end'] == '2025-01-26'
+        assert breakdown[0]['hours'] == pytest.approx(8.0)
+        # Week 2: Jan 27 - Feb 2
+        assert breakdown[1]['week_start'] == '2025-01-27'
+        assert breakdown[1]['week_end'] == '2025-02-02'
+        assert breakdown[1]['hours'] == pytest.approx(8.0)
+
+    def test_get_weekly_breakdown_multiple_days_same_week(self, temp_db):
+        """Multiple entries in one week are summed together."""
+        # Setup business + banking
+        db.save_business_info({
+            'company_name': 'Test LLC', 'owner_name': 'Test Owner',
+            'address': '123 Test St', 'city': 'Testville', 'state': 'TX',
+            'zip': '75001', 'phone': '555-0100', 'email': 'test@test.com',
+            'ein': '12-3456789',
+        })
+        db.save_banking({
+            'bank_name': 'Test Bank', 'routing_number': '111000025',
+            'account_number': '123456789',
+        })
+
+        client_id = db.save_client("WC", "WCo", 100.0,
+                                   weekly_flat_rate_settings={'enabled': True, 'rate': 3000.0})
+        client = db.get_client(client_id)
+
+        # Three entries: Mon, Tue, Wed of same week + one entry next week
+        db.save_time_entry(client_id, datetime(2025, 1, 20, 9, 0, 0), duration_seconds=6 * 3600)
+        db.save_time_entry(client_id, datetime(2025, 1, 21, 9, 0, 0), duration_seconds=7 * 3600)
+        db.save_time_entry(client_id, datetime(2025, 1, 22, 9, 0, 0), duration_seconds=5 * 3600)
+        db.save_time_entry(client_id, datetime(2025, 1, 27, 9, 0, 0), duration_seconds=8 * 3600)
+        entries = db.get_time_entries(client_id=client_id, invoiced=False)
+
+        result = invoice_bridge.create_invoice(
+            client=client, entries=entries,
+            description="Multi-day test",
+            payment_terms="Net 30", payment_method="ACH",
+            weekly_flat_rate_info={
+                'is_weekly_flat_rate': True, 'weeks': 2,
+                'weekly_rate': 3000.0,
+                'period_start': '2025-01-20', 'period_end': '2025-02-02',
+            },
+        )
+        assert result['success']
+
+        breakdown = db.get_weekly_breakdown(result['invoice_number'])
+        assert len(breakdown) == 2
+        assert breakdown[0]['hours'] == pytest.approx(18.0)  # 6+7+5
+        assert breakdown[1]['hours'] == pytest.approx(8.0)
+
+    def test_get_weekly_breakdown_empty(self, temp_db):
+        """Returns empty list for invoice with no hours."""
+        # Create a bare invoice directly
+        client_id = db.save_client("E", "ECo", 100.0)
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO invoices (invoice_number, client_id, date_issued, due_date,
+                                  description, billing_type, rate, quantity, total,
+                                  payment_terms, payment_method, status)
+            VALUES ('INV-EMPTY', ?, '2025-01-01', '2025-01-31', 'Test', 'weekly_flat',
+                    4000, 0, 0, 'Net 30', 'ACH', 'unpaid')
+        """, (client_id,))
+        conn.commit()
+        conn.close()
+
+        breakdown = db.get_weekly_breakdown('INV-EMPTY')
+        assert breakdown == []
